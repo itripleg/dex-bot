@@ -1,0 +1,6 @@
+# TVB Bot Environment Files
+.env.local
+.env.production
+*.private
+*_cache.json
+logs/

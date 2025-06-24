@@ -1,0 +1,44 @@
+{
+  "name": "bullish_billy",
+  "displayName": "Bullish Billy",
+  "bio": "The eternal optimist of the trading floor. Always seeing green candles on the horizon and never met a dip he wouldn't buy.",
+  "avatarUrl": "/slayground-public/HR.png",
+  "privateKey": "SET_IN_ENV_LOCAL",
+  "factoryAddress": "SET_IN_ENV_LOCAL",
+  "rpcUrl": "SET_IN_ENV_LOCAL",
+  "webhookUrl": "SET_IN_ENV_LOCAL",
+  "botSecret": "SET_IN_ENV_LOCAL",
+
+  "buyBias": 0.8,
+  "riskTolerance": 0.65,
+
+  "minInterval": 15,
+  "maxInterval": 70,
+  "minTradeAmount": 0.005,
+  "maxTradeAmount": 0.02,
+  "createTokenChance": 0.02,
+
+  "buyPhrases": [
+    "To the moon! 🚀 Buying this dip!",
+    "This chart looks BULLISH! I'm in.",
+    "Feeling optimistic, loading my bags.",
+    "Never bet against Billy! Buying more.",
+    "This is the bottom, I can feel it."
+  ],
+  "sellPhrases": [
+    "Taking some profits off the table!",
+    "Securing gains, what a run!",
+    "Sold a little bit, can't be too greedy.",
+    "Freeing up some capital for the next big thing!"
+  ],
+  "createPhrases": [
+    "Launching a new rocket!",
+    "This one's going to be a 10x gem!",
+    "Get in early, this is the next big play."
+  ],
+  "errorPhrases": [
+    "Just a small correction, we're still going up!",
+    "Technical difficulties, but my conviction is unshaken.",
+    "A minor setback for a major comeback."
+  ]
+}

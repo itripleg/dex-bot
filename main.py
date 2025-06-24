@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+"""
+Transparent Volume Bot (TVB) - Main Entry Point
+Fixed imports for direct execution
+"""
+
+import argparse
+import sys
+import os
+from pathlib import Path
+
+# Add the project root to Python path for absolute imports
+project_root = Path(__file__).parent.absolute()
+sys.path.insert(0, str(project_root))
+
+# Now use absolute imports
+from bot.core import TransparentVolumeBot
+from bot.config import load_bot_config, validate_config, merge_config_with_environment
+
+def main():
+    """Main entry point with clean argument parsing"""
+    parser = argparse.ArgumentParser(
+        description='Transparent Volume Bot (TVB) - A personality-driven trading bot.',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python main.py --config configs/bullish_billy.json --auto
+  python main.py --config configs/bullish_billy.json --private-key 0x123... --auto
+  python main.py --config configs/bullish_billy.json --dry-run
+        """
+    )
+    
+    parser.add_argument(
+        '--config', 
+        type=str, 
+        required=True, 
+        help='Path to the JSON configuration file for the bot.'
+    )
+    
+    parser.add_argument(
+        '--auto', 
+        action='store_true', 
+        help='Start bot automatically without confirmation.'
+    )
+    
+    parser.add_argument(
+        '--private-key', 
+        type=str, 
+        help='Override private key from config file.'
+    )
+    
+    parser.add_argument(
+        '--dry-run', 
+        action='store_true', 
+        help='Test configuration without starting trading.'
+    )
+    
+    parser.add_argument(
+        '--refresh-cache', 
+        action='store_true', 
+        help='Force refresh token cache on startup.'
+    )
+    
+    parser.add_argument(
+        '--verbose', '-v', 
+        action='store_true', 
+        help='Enable verbose logging.'
+    )
+    
+    args = parser.parse_args()
+    
+    try:
+        print("🤖 TVB: Loading configuration...")
+        config = load_bot_config(args.config)
+        
+        print("🤖 TVB: Merging with environment variables...")
+        config = merge_config_with_environment(config)
+        
+        print("🤖 TVB: Validating configuration...")
+        validate_config(config)
+        
+        print("🤖 TVB: Initializing bot...")
+        bot = TransparentVolumeBot(
+            config=config,
+            private_key_override=args.private_key,
+            force_cache_refresh=args.refresh_cache,
+            verbose=args.verbose
+        )
+        
+        if args.dry_run:
+            print("🤖 TVB: ✅ Dry run completed successfully!")
+            print(f"🤖 TVB: Bot '{bot.display_name}' is ready to trade.")
+            print(f"🤖 TVB: Wallet: {bot.account.address}")
+            print(f"🤖 TVB: Balance: {bot.get_avax_balance():.6f} AVAX")
+            print(f"🤖 TVB: Tradeable tokens: {len(bot.tokens)}")
+            return
+        
+        if args.auto:
+            print("🤖 TVB: 🚀 Starting automated trading...")
+            bot.run()
+        else:
+            print("🤖 TVB: ✅ Bot initialized successfully!")
+            print("🤖 TVB: Add --auto flag to start trading automatically.")
+            print(f"🤖 TVB: Example: python main.py --config {args.config} --auto")
+            
+    except KeyboardInterrupt:
+        print("\n🤖 TVB: 👋 Goodbye!")
+        sys.exit(0)
+    except Exception as e:
+        print(f"🤖 TVB: 💥 Critical Error: {e}")
+        if args.verbose:
+            import traceback
+            traceback.print_exc()
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()

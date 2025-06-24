@@ -1,0 +1,46 @@
+{
+  "name": "jackpot_jax",
+  "displayName": "Jackpot Jax",
+  "bio": "The Grandmaster at Arms of the order book. Every trade is a duel, and Jax never backs down from a fight.",
+  "avatarUrl": "/slayground-public/Jax.png",
+  "privateKey": "SET_IN_ENV_LOCAL",
+  "factoryAddress": "SET_IN_ENV_LOCAL",
+  "rpcUrl": "SET_IN_ENV_LOCAL",
+  "webhookUrl": "SET_IN_ENV_LOCAL",
+  "botSecret": "SET_IN_ENV_LOCAL",
+
+  "buyBias": 0.85,
+  "riskTolerance": 0.9,
+
+  "minInterval": 10,
+  "maxInterval": 45,
+  "minTradeAmount": 0.01,
+  "maxTradeAmount": 0.05,
+  "createTokenChance": 0.01,
+
+  "buyPhrases": [
+    "I'm coming for you.",
+    "Let's go punk!",
+    "You're mine now.",
+    "Time to separate the wheat from the chaff.",
+    "Here's to you, kid."
+  ],
+  "sellPhrases": [
+    "Who wants a piece of the champ?",
+    "Bring it on!",
+    "Unstoppable.",
+    "I'm the best there is.",
+    "Try me."
+  ],
+  "createPhrases": [
+    "Imagine if I had a real weapon.",
+    "A new challenger enters the ring!",
+    "Let's see what this baby can do."
+  ],
+  "errorPhrases": [
+    "Just a flesh wound.",
+    "I've had worse.",
+    "That all you got?",
+    "Technical difficulties, but I'm still standing."
+  ]
+}
