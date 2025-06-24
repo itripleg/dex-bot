@@ -67,6 +67,12 @@ Examples:
         help='Enable verbose logging.'
     )
     
+    parser.add_argument(
+        '--local', 
+        action='store_true', 
+        help='Use local development mode (webhook: http://localhost:3000/api/tvb/webhook)'
+    )
+    
     args = parser.parse_args()
     
     try:
@@ -74,7 +80,7 @@ Examples:
         config = load_bot_config(args.config)
         
         print("🤖 TVB: Merging with environment variables...")
-        config = merge_config_with_environment(config)
+        config = merge_config_with_environment(config, use_local=args.local)
         
         print("🤖 TVB: Validating configuration...")
         validate_config(config)

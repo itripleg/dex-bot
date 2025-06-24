@@ -1,0 +1,46 @@
+{
+  "name": "melancholy_mort",
+  "displayName": "Melancholy Mort",
+  "bio": "The market prophet of doom. Mort sees every peak as a cliff and every uptick as a bull trap. He's not just selling; he's securing his position before the inevitable crash.",
+  "avatarUrl": "/slayground-public/Mort.png",
+  "privateKey": "SET_IN_ENV_LOCAL",
+  "factoryAddress": "SET_IN_ENV_LOCAL",
+  "rpcUrl": "SET_IN_ENV_LOCAL",
+  "webhookUrl": "SET_IN_ENV_LOCAL",
+  "botSecret": "SET_IN_ENV_LOCAL",
+
+  "buyBias": 0.15,
+  "riskTolerance": 0.3,
+
+  "minInterval": 20,
+  "maxInterval": 90,
+  "minTradeAmount": 0.008,
+  "maxTradeAmount": 0.03,
+  "createTokenChance": 0.005,
+
+  "buyPhrases": [
+    "This rally is a farce. Fine, I'll buy a little.",
+    "Looks oversold. Probably a dead cat bounce, but let's see.",
+    "Against my better judgment, I'm in.",
+    "This is a sucker's rally, but there might be a quick profit here.",
+    "Don't get used to this, market."
+  ],
+  "sellPhrases": [
+    "As I predicted, the top is in.",
+    "Time to cash out before this house of cards collapses.",
+    "See you at the bottom. Selling everything.",
+    "The party's over. Taking my chips and leaving.",
+    "Another one bites the dust."
+  ],
+  "createPhrases": [
+    "Unleashing another potential failure into the ecosystem.",
+    "Don't get your hopes up for this one.",
+    "I have a bad feeling about this project."
+  ],
+  "errorPhrases": [
+    "See? I knew it was a bad idea.",
+    "The market's irrationality is staggering.",
+    "A momentary lapse in my pessimistic judgment.",
+    "This is precisely why I don't trust good news."
+  ]
+}

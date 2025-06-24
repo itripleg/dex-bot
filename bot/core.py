@@ -14,6 +14,7 @@ from bot.config import get_private_key, merge_config_with_defaults, print_config
 from bot.cache import TokenCache, TokenLoader
 from bot.trader import TokenTrader
 from bot.webhook import WebhookManager
+from bot.logger import BotLogger
 from contracts.factory import FactoryContract
 from contracts.token import TokenContract
 
@@ -24,8 +25,6 @@ class TransparentVolumeBot:
     
     def __init__(self, config, private_key_override=None, force_cache_refresh=False, verbose=False):
         """Initialize the bot with modular components"""
-        print(f"🤖 TVB: 🚀 Initializing Transparent Volume Bot...")
-        
         # Store configuration
         self.config = merge_config_with_defaults(config)
         self.verbose = verbose
@@ -33,6 +32,10 @@ class TransparentVolumeBot:
         # Bot identity
         self.bot_name = self.config['name']
         self.display_name = self.config['displayName']
+        
+        # Initialize bot-specific logger
+        self.logger = BotLogger(self.bot_name, self.display_name)
+        self.logger.info("🚀 Initializing Transparent Volume Bot...")
         
         print_config_summary(self.config)
         
@@ -51,7 +54,8 @@ class TransparentVolumeBot:
             account=self.account,
             factory_contract=self.factory_contract.contract,
             config=self.config,
-            verbose=self.verbose
+            verbose=self.verbose,
+            logger=self.logger
         )
         
         # Initialize webhook manager
@@ -79,7 +83,7 @@ class TransparentVolumeBot:
     
     def _setup_web3_and_account(self, private_key_override):
         """Initialize Web3 connection and account"""
-        print("🤖 TVB: 🌐 Setting up Web3 connection...")
+        self.logger.info("🌐 Setting up Web3 connection...")
         
         self.rpc_url = self.config['rpcUrl']
         self.w3 = Web3(Web3.HTTPProvider(self.rpc_url))
@@ -87,15 +91,15 @@ class TransparentVolumeBot:
         if not self.w3.is_connected():
             raise ConnectionError(f"Failed to connect to RPC: {self.rpc_url}")
         
-        # Setup account
-        private_key = get_private_key(self.config, private_key_override)
+        # Setup account - pass bot name for environment lookup
+        private_key = get_private_key(self.config, private_key_override, self.bot_name)
         self.account = Account.from_key(private_key)
         
-        print(f"🤖 TVB: 💰 Account: {self.account.address}")
+        self.logger.success(f"Account: {self.account.address}")
     
     def _setup_contracts(self):
         """Initialize contract interfaces"""
-        print("🤖 TVB: 📜 Setting up contract interfaces...")
+        self.logger.info("📜 Setting up contract interfaces...")
         
         self.factory_contract = FactoryContract(
             w3=self.w3,
@@ -106,20 +110,21 @@ class TransparentVolumeBot:
     
     def _setup_cache(self, force_refresh):
         """Initialize token cache system"""
-        print("🤖 TVB: 💾 Setting up token cache...")
+        self.logger.info("💾 Setting up token cache...")
         
         cache_duration = self.config.get('cacheDurationHours', 6)
         self.cache = TokenCache(self.bot_name, cache_duration)
         
         if force_refresh:
             self.cache.force_refresh()
-            print("🤖 TVB: 🔄 Forced cache refresh requested")
+            self.logger.info("🔄 Forced cache refresh requested")
         
         self.token_loader = TokenLoader(
             factory_contract=self.factory_contract.contract,
             token_abi=self.token_contract.abi,
             w3=self.w3,
-            cache=self.cache
+            cache=self.cache,
+            logger=self.logger
         )
     
     def _extract_personality_phrases(self):
@@ -217,6 +222,7 @@ class TransparentVolumeBot:
             "message": f"{self.display_name} is active and trading",
             "currentBalance": current_balance,
             "balanceChange": balance_change,
+            "minTradeAmount": self.config.get('minTradeAmount', 0.005),
             "tokensTracked": len(self.tokens),
             "cacheStats": {
                 "cached_tokens": cache_stats["cached_tokens"],

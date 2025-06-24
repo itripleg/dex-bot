@@ -29,9 +29,13 @@ class EnvironmentManager:
     
     def get_private_key(self, config, override_key=None, bot_name=None):
         """Get private key with multiple fallback sources"""
+        # Ensure bot_name is valid for environment variable construction
+        if bot_name:
+            bot_name = str(bot_name).upper()
+        
         sources = [
             ("CLI override", override_key),
-            (f"BOT_{bot_name.upper()}_PRIVATE_KEY", os.getenv(f"BOT_{bot_name.upper()}_PRIVATE_KEY") if bot_name else None),
+            (f"BOT_{bot_name}_PRIVATE_KEY", os.getenv(f"BOT_{bot_name}_PRIVATE_KEY") if bot_name else None),
             ("BOT_PRIVATE_KEY", os.getenv('BOT_PRIVATE_KEY')),
             ("PRIVATE_KEY", os.getenv('PRIVATE_KEY')),
             ("Config file", config.get('privateKey')),
@@ -79,8 +83,12 @@ class EnvironmentManager:
         """Get a secure value from environment or config with bot-specific support"""
         # Add bot-specific environment key if bot_name provided
         if bot_name:
-            bot_specific_key = f"BOT_{bot_name.upper()}_{env_keys[0].replace('BOT_', '').replace(f'{bot_name.upper()}_', '')}"
-            env_keys = [bot_specific_key] + env_keys
+            bot_name = str(bot_name).upper()
+            # Create bot-specific key from the first generic key
+            if env_keys:
+                base_key = env_keys[0].replace('BOT_', '').replace(f'{bot_name}_', '')
+                bot_specific_key = f"BOT_{bot_name}_{base_key}"
+                env_keys = [bot_specific_key] + env_keys
         
         # Try environment variables first
         for env_key in env_keys:
@@ -161,10 +169,15 @@ def get_private_key(config, override_key=None, bot_name=None):
     """Get private key with security and multiple sources"""
     return _env_manager.get_private_key(config, override_key, bot_name)
 
-def merge_config_with_environment(config):
+def merge_config_with_environment(config, use_local=False):
     """Merge config with environment variables for sensitive data"""
     enhanced_config = config.copy()
     bot_name = config.get('name', '')
+    
+    # Override webhook URL for local development
+    if use_local:
+        enhanced_config['webhookUrl'] = 'http://localhost:3000/api/tvb/webhook'
+        print(f"🤖 TVB: 🏠 Using local development webhook: http://localhost:3000/api/tvb/webhook")
     
     # Get RPC URL from environment or config
     rpc_url = _env_manager.get_secure_value(
@@ -179,16 +192,17 @@ def merge_config_with_environment(config):
     elif not config.get('rpcUrl'):
         raise ValueError("RPC URL not found in environment or config")
     
-    # Get webhook URL from environment
-    webhook_url = _env_manager.get_secure_value(
-        config,
-        'webhookUrl', 
-        ['WEBHOOK_URL'],
-        'Webhook URL',
-        bot_name
-    )
-    if webhook_url:
-        enhanced_config['webhookUrl'] = webhook_url
+    # Get webhook URL from environment (unless overridden by --local)
+    if not use_local:
+        webhook_url = _env_manager.get_secure_value(
+            config,
+            'webhookUrl', 
+            ['WEBHOOK_URL'],
+            'Webhook URL',
+            bot_name
+        )
+        if webhook_url:
+            enhanced_config['webhookUrl'] = webhook_url
     
     # Get webhook secret from environment (bot-specific first)
     webhook_secret = _env_manager.get_secure_value(

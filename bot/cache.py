@@ -185,21 +185,29 @@ class TokenCache:
 class TokenLoader:
     """Handles token loading with cache integration"""
     
-    def __init__(self, factory_contract, token_abi, w3, cache):
+    def __init__(self, factory_contract, token_abi, w3, cache, logger=None):
         self.factory_contract = factory_contract
         self.token_abi = token_abi
         self.w3 = w3
         self.cache = cache
+        self.logger = logger
     
     def load_tokens_optimized(self):
         """Load tokens with cache optimization"""
-        print("🤖 TVB: 🚀 Starting optimized token loading...")
+        if self.logger:
+            self.logger.info("🚀 Starting optimized token loading...")
+        else:
+            print("🤖 TVB: 🚀 Starting optimized token loading...")
+        
         start_time = time.time()
         
         try:
             # Get all token addresses from factory
             token_addresses = self.factory_contract.functions.getAllTokens().call()
-            print(f"🤖 TVB: 📡 Factory returned {len(token_addresses)} token addresses")
+            if self.logger:
+                self.logger.info(f"📡 Factory returned {len(token_addresses)} token addresses")
+            else:
+                print(f"🤖 TVB: 📡 Factory returned {len(token_addresses)} token addresses")
             
             # Clean up stale tokens
             self.cache.clear_stale_tokens(token_addresses)
@@ -216,12 +224,18 @@ class TokenLoader:
                 self.cache.save()
             
             elapsed = time.time() - start_time
-            print(f"🤖 TVB: ✅ Loaded {len(tradeable_tokens)} tradeable tokens in {elapsed:.2f}s")
+            if self.logger:
+                self.logger.success(f"Loaded {len(tradeable_tokens)} tradeable tokens in {elapsed:.2f}s")
+            else:
+                print(f"🤖 TVB: ✅ Loaded {len(tradeable_tokens)} tradeable tokens in {elapsed:.2f}s")
             
             return tradeable_tokens
             
         except Exception as e:
-            print(f"🤖 TVB: ❌ Token loading error: {e}")
+            if self.logger:
+                self.logger.error(f"Token loading error: {e}")
+            else:
+                print(f"🤖 TVB: ❌ Token loading error: {e}")
             return []
     
     def _load_from_cache(self, token_addresses):

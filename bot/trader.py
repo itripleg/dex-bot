@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Trading execution logic for the Transparent Volume Bot
-Handles buy/sell decisions and transaction execution
+Handles buy/sell decisions and transaction execution with bot-specific logging
 """
 
 import random
@@ -10,12 +10,13 @@ from web3 import Web3
 class TokenTrader:
     """Handles all trading operations and decision logic"""
     
-    def __init__(self, w3, account, factory_contract, config, verbose=False):
+    def __init__(self, w3, account, factory_contract, config, verbose=False, logger=None):
         self.w3 = w3
         self.account = account
         self.factory_contract = factory_contract
         self.config = config
         self.verbose = verbose
+        self.logger = logger  # Bot-specific logger
         
         # Trading parameters from config
         self.buy_bias = config.get('buyBias', 0.6)
@@ -34,8 +35,8 @@ class TokenTrader:
             }
         ]
         
-        if self.verbose:
-            print(f"🤖 TVB: 💹 Trader initialized with buy bias: {self.buy_bias:.2f}, risk: {self.risk_tolerance:.2f}")
+        if self.verbose and self.logger:
+            self.logger.info(f"💹 Trader initialized with buy bias: {self.buy_bias:.2f}, risk: {self.risk_tolerance:.2f}")
     
     def execute_trade_decision(self, token):
         """Make and execute a trading decision for the given token"""
@@ -46,24 +47,47 @@ class TokenTrader:
             # Get current token balance
             token_balance = self._get_token_balance(token_address)
             
+            # Check if we have enough AVAX for minimum trade
+            current_avax = self._get_avax_balance()
+            min_trade = self.min_trade_amount
+            
+            if current_avax < min_trade:
+                # Force sell if we have tokens but insufficient AVAX to buy
+                if token_balance > 0:
+                    if self.logger:
+                        self.logger.warning(f"Insufficient AVAX ({current_avax:.4f}) for buying, forcing sell of {token_symbol}")
+                    else:
+                        print(f"🤖 TVB: ⚠️ Insufficient AVAX ({current_avax:.4f}) for buying, forcing sell of {token_symbol}")
+                    
+                    return self._execute_sell(token, token_balance)
+                else:
+                    if self.logger:
+                        self.logger.warning(f"Insufficient AVAX ({current_avax:.4f}) and no {token_symbol} to sell")
+                    else:
+                        print(f"🤖 TVB: ⚠️ Insufficient AVAX ({current_avax:.4f}) and no {token_symbol} to sell")
+                    return False
+            
             # Make trading decision based on personality and holdings
             action = self._decide_trade_action(token_balance)
             
-            if self.verbose:
+            if self.verbose and self.logger:
                 balance_display = token_balance / 1e18
-                print(f"🤖 TVB: 🎲 Decision for {token_symbol}: {action.upper()} (balance: {balance_display:.4f})")
+                self.logger.info(f"🎲 Decision for {token_symbol}: {action.upper()} (balance: {balance_display:.4f})")
             
             if action == 'buy':
                 return self._execute_buy(token)
             elif action == 'sell':
                 return self._execute_sell(token, token_balance)
             else:
-                if self.verbose:
-                    print(f"🤖 TVB: ⏭️ No action taken for {token_symbol}")
+                if self.verbose and self.logger:
+                    self.logger.info(f"⏭️ No action taken for {token_symbol}")
                 return True
                 
         except Exception as e:
-            print(f"🤖 TVB: ❌ Trade decision error for {token.get('symbol', 'Unknown')}: {e}")
+            if self.logger:
+                self.logger.error(f"Trade decision error for {token.get('symbol', 'Unknown')}: {e}")
+            else:
+                print(f"🤖 TVB: ❌ Trade decision error for {token.get('symbol', 'Unknown')}: {e}")
             return False
     
     def _decide_trade_action(self, token_balance):
@@ -112,13 +136,22 @@ class TokenTrader:
             current_avax = self._get_avax_balance()
             if amount_to_buy > current_avax * 0.9:
                 amount_to_buy = current_avax * 0.5
-                print(f"🤖 TVB: ⚠️ Adjusted buy amount to preserve AVAX balance")
+                if self.logger:
+                    self.logger.warning("Adjusted buy amount to preserve AVAX balance")
+                else:
+                    print(f"🤖 TVB: ⚠️  Adjusted buy amount to preserve AVAX balance")
             
             if amount_to_buy < self.min_trade_amount:
-                print(f"🤖 TVB: ⏭️ Insufficient AVAX for minimum trade ({current_avax:.4f} available)")
+                if self.logger:
+                    self.logger.warning(f"Insufficient AVAX for minimum trade ({current_avax:.4f} AVAX available)")
+                else:
+                    print(f"🤖 TVB: ⏭️ Insufficient AVAX for minimum trade size ({current_avax:.4f} AVAX available)")
                 return False
-            
-            print(f"🤖 TVB: 🟢 Executing BUY: {amount_to_buy:.4f} AVAX for {token_symbol}")
+                
+            if self.logger:
+                self.logger.trade("buy", f"{amount_to_buy:.4f} AVAX for {token_symbol}")
+            else:
+                print(f"🤖 TVB: 🟢 Executing BUY: {amount_to_buy:.4f} AVAX for {token_symbol}")
             
             # Build and send transaction
             nonce = self.w3.eth.get_transaction_count(self.account.address)
@@ -138,22 +171,32 @@ class TokenTrader:
             signed_txn = self.account.sign_transaction(txn)
             tx_hash = self.w3.eth.send_raw_transaction(signed_txn.rawTransaction)
             
-            print(f"🤖 TVB: 🟢 BUY transaction sent, waiting for confirmation...")
+            if self.logger:
+                self.logger.info("🟢 BUY transaction sent, waiting for confirmation...")
+            else:
+                print(f"🤖 TVB: 🟢 BUY transaction sent, waiting for confirmation...")
+            
             receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
             
             if receipt.status == 1:
                 tx_hash_hex = self.w3.to_hex(tx_hash)
-                print(f"🤖 TVB: ✅ Buy successful! TX: {tx_hash_hex}")
-                
-                # Note: Webhook notification would be sent by the calling code
-                # that has access to the webhook manager
+                if self.logger:
+                    self.logger.success(f"Buy successful! TX: {tx_hash_hex}")
+                else:
+                    print(f"🤖 TVB: ✅ Buy successful! TX: {tx_hash_hex}")
                 return True
             else:
-                print(f"🤖 TVB: ❌ Buy transaction failed in receipt")
+                if self.logger:
+                    self.logger.error("Buy transaction failed in receipt")
+                else:
+                    print(f"🤖 TVB: ❌ Buy transaction failed in receipt")
                 return False
                 
         except Exception as e:
-            print(f"🤖 TVB: ❌ Buy execution error for {token_symbol}: {e}")
+            if self.logger:
+                self.logger.error(f"Buy execution error for {token_symbol}: {e}")
+            else:
+                print(f"🤖 TVB: ❌ Buy execution error for {token_symbol}: {e}")
             return False
     
     def _execute_sell(self, token, token_balance):
@@ -171,11 +214,17 @@ class TokenTrader:
             amount_to_sell = int(token_balance * sell_percentage)
             
             if amount_to_sell <= 0:
-                print(f"🤖 TVB: ⏭️ Calculated sell amount is zero, skipping")
+                if self.logger:
+                    self.logger.warning("Calculated sell amount is zero, skipping")
+                else:
+                    print(f"🤖 TVB: ⏭️ Calculated sell amount is zero, skipping")
                 return False
             
             readable_amount = amount_to_sell / 1e18
-            print(f"🤖 TVB: 🔴 Executing SELL: {readable_amount:.4f} {token_symbol} ({sell_percentage*100:.1f}%)")
+            if self.logger:
+                self.logger.trade("sell", f"{readable_amount:.4f} {token_symbol} ({sell_percentage*100:.1f}%)")
+            else:
+                print(f"🤖 TVB: 🔴 Executing SELL: {readable_amount:.4f} {token_symbol} ({sell_percentage*100:.1f}%)")
             
             # Build and send transaction
             nonce = self.w3.eth.get_transaction_count(self.account.address)
@@ -195,19 +244,32 @@ class TokenTrader:
             signed_txn = self.account.sign_transaction(txn)
             tx_hash = self.w3.eth.send_raw_transaction(signed_txn.rawTransaction)
             
-            print(f"🤖 TVB: 🔴 SELL transaction sent, waiting for confirmation...")
+            if self.logger:
+                self.logger.info("🔴 SELL transaction sent, waiting for confirmation...")
+            else:
+                print(f"🤖 TVB: 🔴 SELL transaction sent, waiting for confirmation...")
+            
             receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
             
             if receipt.status == 1:
                 tx_hash_hex = self.w3.to_hex(tx_hash)
-                print(f"🤖 TVB: ✅ Sell successful! TX: {tx_hash_hex}")
+                if self.logger:
+                    self.logger.success(f"Sell successful! TX: {tx_hash_hex}")
+                else:
+                    print(f"🤖 TVB: ✅ Sell successful! TX: {tx_hash_hex}")
                 return True
             else:
-                print(f"🤖 TVB: ❌ Sell transaction failed in receipt")
+                if self.logger:
+                    self.logger.error("Sell transaction failed in receipt")
+                else:
+                    print(f"🤖 TVB: ❌ Sell transaction failed in receipt")
                 return False
                 
         except Exception as e:
-            print(f"🤖 TVB: ❌ Sell execution error for {token_symbol}: {e}")
+            if self.logger:
+                self.logger.error(f"Sell execution error for {token_symbol}: {e}")
+            else:
+                print(f"🤖 TVB: ❌ Sell execution error for {token_symbol}: {e}")
             return False
     
     def _get_token_balance(self, token_address):
@@ -219,8 +281,8 @@ class TokenTrader:
             )
             return token_contract.functions.balanceOf(self.account.address).call()
         except Exception as e:
-            if self.verbose:
-                print(f"🤖 TVB: ⚠️ Error getting token balance for {token_address[:10]}...: {e}")
+            if self.verbose and self.logger:
+                self.logger.error(f"Error getting token balance for {token_address[:10]}...: {e}")
             return 0
     
     def _get_avax_balance(self):
@@ -240,10 +302,10 @@ class TokenTrader:
     
     def simulate_trade_decision(self, token, num_simulations=100):
         """Simulate trade decisions for testing personality calibration"""
-        if not self.verbose:
+        if not self.verbose or not self.logger:
             return None
             
-        print(f"\n🤖 TVB: 🧪 Simulating {num_simulations} decisions for {token.get('symbol', 'Unknown')}:")
+        self.logger.info(f"🧪 Simulating {num_simulations} decisions for {token.get('symbol', 'Unknown')}:")
         
         # Test with no tokens
         actions_no_tokens = []
@@ -262,9 +324,9 @@ class TokenTrader:
         buy_rate_no_tokens = actions_no_tokens.count('buy') / num_simulations * 100
         sell_rate_with_tokens = actions_with_tokens.count('sell') / num_simulations * 100
         
-        print(f"  📊 No tokens → Buy rate: {buy_rate_no_tokens:.1f}%")
-        print(f"  📊 With tokens → Sell rate: {sell_rate_with_tokens:.1f}%")
-        print(f"  🎯 Expected buy bias: {self.buy_bias * 100:.1f}%")
+        self.logger.info(f"📊 No tokens → Buy rate: {buy_rate_no_tokens:.1f}%")
+        self.logger.info(f"📊 With tokens → Sell rate: {sell_rate_with_tokens:.1f}%")
+        self.logger.info(f"🎯 Expected buy bias: {self.buy_bias * 100:.1f}%")
         
         return {
             "buy_rate_no_tokens": buy_rate_no_tokens,
