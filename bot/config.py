@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Enhanced configuration loading with environment security for public repositories
+FIXED: Proper CLI argument handling for private keys
 """
 
 import json
@@ -29,12 +30,19 @@ class EnvironmentManager:
     
     def get_private_key(self, config, override_key=None, bot_name=None):
         """Get private key with multiple fallback sources"""
+        # FIXED: Check CLI override FIRST
+        if override_key:
+            key = override_key
+            if not key.startswith('0x'):
+                key = f"0x{key}"
+            print("🤖 TVB: 🔑 Private key loaded from: CLI argument")
+            return key
+        
         # Ensure bot_name is valid for environment variable construction
         if bot_name:
             bot_name = str(bot_name).upper()
         
         sources = [
-            ("CLI override", override_key),
             (f"BOT_{bot_name}_PRIVATE_KEY", os.getenv(f"BOT_{bot_name}_PRIVATE_KEY") if bot_name else None),
             ("BOT_PRIVATE_KEY", os.getenv('BOT_PRIVATE_KEY')),
             ("PRIVATE_KEY", os.getenv('PRIVATE_KEY')),
@@ -135,6 +143,10 @@ def validate_config(config):
     if missing_fields:
         raise ValueError(f"Missing required config fields: {missing_fields}")
     
+    # Check for RPC URL
+    if not config.get('rpcUrl'):
+        raise ValueError("RPC URL not found in config or environment variables. Use --network flag or set RPC_URL environment variable.")
+    
     # Validate personality parameters
     personality_fields = {
         'buyBias': (0.0, 1.0),
@@ -189,8 +201,7 @@ def merge_config_with_environment(config, use_local=False):
     )
     if rpc_url:
         enhanced_config['rpcUrl'] = rpc_url
-    elif not config.get('rpcUrl'):
-        raise ValueError("RPC URL not found in environment or config")
+    # Don't require RPC URL here - let CLI override handle it
     
     # Get webhook URL from environment (unless overridden by --local)
     if not use_local:

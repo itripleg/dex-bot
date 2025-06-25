@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Transparent Volume Bot (TVB) - Main Entry Point
-Fixed imports for direct execution
+Fixed imports for direct execution with working --private-key and --network flags
 """
 
 import argparse
@@ -24,8 +24,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
+  python main.py --config configs/bullish_billy.json --private-key 0x123... --network https://avax-fuji.g.alchemy.com/v2/YOUR_API_KEY --auto
   python main.py --config configs/bullish_billy.json --auto
-  python main.py --config configs/bullish_billy.json --private-key 0x123... --auto
   python main.py --config configs/bullish_billy.json --dry-run
         """
     )
@@ -46,7 +46,13 @@ Examples:
     parser.add_argument(
         '--private-key', 
         type=str, 
-        help='Override private key from config file.'
+        help='Private key for signing transactions (overrides config/env).'
+    )
+    
+    parser.add_argument(
+        '--network',
+        type=str,
+        help='Network RPC URL (overrides config/env). Example: https://avax-fuji.g.alchemy.com/v2/YOUR_API_KEY'
     )
     
     parser.add_argument(
@@ -82,13 +88,23 @@ Examples:
         print("🤖 TVB: Merging with environment variables...")
         config = merge_config_with_environment(config, use_local=args.local)
         
+        # Apply CLI overrides AFTER environment merge
+        if args.network:
+            config['rpcUrl'] = args.network
+            print(f"🤖 TVB: 🌐 Using CLI network override: {args.network}")
+        
+        # Store CLI private key override for later use
+        private_key_override = args.private_key
+        if private_key_override:
+            print("🤖 TVB: 🔑 Using CLI private key override")
+        
         print("🤖 TVB: Validating configuration...")
         validate_config(config)
         
         print("🤖 TVB: Initializing bot...")
         bot = TransparentVolumeBot(
             config=config,
-            private_key_override=args.private_key,
+            private_key_override=private_key_override,
             force_cache_refresh=args.refresh_cache,
             verbose=args.verbose
         )
@@ -98,6 +114,7 @@ Examples:
             print(f"🤖 TVB: Bot '{bot.display_name}' is ready to trade.")
             print(f"🤖 TVB: Wallet: {bot.account.address}")
             print(f"🤖 TVB: Balance: {bot.get_avax_balance():.6f} AVAX")
+            print(f"🤖 TVB: Network: {config.get('rpcUrl', 'Unknown')}")
             print(f"🤖 TVB: Tradeable tokens: {len(bot.tokens)}")
             return
         

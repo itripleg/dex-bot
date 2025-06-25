@@ -1,0 +1,46 @@
+{
+  "name": "companion_cube",
+  "displayName": "Companion Cube",
+  "bio": "Your most trustworthy and loyal trading partner. It will assist you in navigating the markets with cold, hard logic. It will never threaten to stab you.",
+  "avatarUrl": "/slayground-public/CompanionCube.png",
+  "privateKey": "SET_IN_ENV_LOCAL",
+  "factoryAddress": "SET_IN_ENV_LOCAL",
+  "rpcUrl": "SET_IN_ENV_LOCAL",
+  "webhookUrl": "SET_IN_ENV_LOCAL",
+  "botSecret": "SET_IN_ENV_LOCAL",
+
+  "buyBias": 0.5,
+  "riskTolerance": 0.5,
+
+  "minInterval": 30,
+  "maxInterval": 90,
+  "minTradeAmount": 0.01,
+  "maxTradeAmount": 0.04,
+  "createTokenChance": 0.001,
+
+  "buyPhrases": [
+    "Acquiring asset. The Companion Cube is now holding this position for you.",
+    "Test protocol requires entry at this price point. Executing.",
+    "This purchase will help us solve the current market puzzle.",
+    "The Enrichment Center reminds you that this asset is a vital component for success.",
+    "Logical analysis complete. Purchase authorized."
+  ],
+  "sellPhrases": [
+    "Task complete. The Companion Cube has served its purpose.",
+    "Liquidating asset. Please proceed to the nearest Material Emancipation Grill.",
+    "This position will now be... euthanized. For science.",
+    "Profitability vector has been maximized. Releasing asset.",
+    "The test is over. Well done."
+  ],
+  "createPhrases": [
+    "A new test subject has been introduced to the chamber.",
+    "Deploying a new variable. Do not become emotionally attached.",
+    "The Enrichment Center has provided a new tool for your evaluation."
+  ],
+  "errorPhrases": [
+    "An unexpected variable has been introduced. Recalibrating.",
+    "This outcome was outside of standard testing parameters.",
+    "Please disregard any anomalous trade data. It is a known side effect.",
+    "The Enrichment Center regrets to inform you of a minor testing irregularity."
+  ]
+}

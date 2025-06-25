@@ -55,18 +55,26 @@ class BotManager:
         
         return valid_configs
     
-    def create_bot(self, config_path, force_cache_refresh=False, use_local=False):
+    def create_bot(self, config_path, force_cache_refresh=False, use_local=False, network_override=None, private_key_override=None):
         """Create a bot instance from config"""
         try:
             print(f"\n🤖 TVB: 🔧 Initializing bot from {config_path}...")
             
             config = load_bot_config(config_path)
             config = merge_config_with_environment(config, use_local=use_local)
+
+            # Apply global CLI overrides
+            if network_override:
+                print(f"🤖 TVB: 🌐 Applying global network override: {network_override}")
+                config['rpcUrl'] = network_override
+            if private_key_override:
+                print("🤖 TVB: 🔑 Applying global private key override")
+
             validate_config(config)
             
             bot = TransparentVolumeBot(
                 config=config,
-                private_key_override=None,
+                private_key_override=private_key_override,
                 force_cache_refresh=force_cache_refresh,
                 verbose=self.verbose
             )
@@ -94,7 +102,7 @@ class BotManager:
         finally:
             print(f"🤖 TVB: 👋 {bot_name} thread ended")
     
-    def start_all_bots(self, config_files, force_cache_refresh=False, use_local=False):
+    def start_all_bots(self, config_files, force_cache_refresh=False, use_local=False, network_override=None, private_key_override=None):
         """Start all bots in separate threads"""
         print(f"\n🤖 TVB: 🚀 Starting multi-bot launcher...")
         
@@ -104,7 +112,7 @@ class BotManager:
         # Initialize all bots first
         successful_bots = []
         for config_path in config_files:
-            bot_name, bot = self.create_bot(config_path, force_cache_refresh, use_local)
+            bot_name, bot = self.create_bot(config_path, force_cache_refresh, use_local, network_override, private_key_override)
             if bot:
                 successful_bots.append(bot_name)
         
@@ -181,7 +189,7 @@ class BotManager:
         
         print("🤖 TVB: 👋 All bots stopped")
     
-    def dry_run_all(self, config_files, force_cache_refresh=False, use_local=False):
+    def dry_run_all(self, config_files, force_cache_refresh=False, use_local=False, network_override=None, private_key_override=None):
         """Test all bot configurations without starting them"""
         print(f"\n🤖 TVB: 🧪 Dry run for all bot configurations...")
         
@@ -197,11 +205,19 @@ class BotManager:
                 
                 config = load_bot_config(config_path)
                 config = merge_config_with_environment(config, use_local=use_local)
+
+                # Apply global CLI overrides
+                if network_override:
+                    print(f"🤖 TVB: 🌐 Applying global network override: {network_override}")
+                    config['rpcUrl'] = network_override
+                if private_key_override:
+                    print("🤖 TVB: 🔑 Applying global private key override")
+
                 validate_config(config)
                 
                 bot = TransparentVolumeBot(
                     config=config,
-                    private_key_override=None,
+                    private_key_override=private_key_override,
                     force_cache_refresh=force_cache_refresh,
                     verbose=self.verbose
                 )
@@ -232,7 +248,8 @@ def main():
         epilog="""
 Examples:
   python launch_all.py --auto                    # Start all bots in configs/
-  python launch_all.py --dry-run                 # Test all configs
+  python launch_all.py --dry-run --network <RPC_URL> # Test all configs on a specific network
+  python launch_all.py --auto --private-key <KEY>    # Run all bots with the same wallet
   python launch_all.py --configs bullish_billy.json jackpot_jax.json --auto
   python launch_all.py --config-dir my_bots/ --auto
         """
@@ -261,13 +278,25 @@ Examples:
         default='configs',
         help='Directory to search for config files (default: configs/)'
     )
+
+    parser.add_argument(
+        '--private-key',
+        type=str,
+        help='Global private key to use for ALL bots (overrides config/env).'
+    )
+    
+    parser.add_argument(
+        '--network',
+        type=str,
+        help='Global network RPC URL to use for ALL bots (overrides config/env).'
+    )
     
     parser.add_argument(
         '--refresh-cache',
         action='store_true',
         help='Force refresh token cache for all bots'
     )
-    
+
     parser.add_argument(
         '--verbose', '-v',
         action='store_true',
@@ -279,7 +308,7 @@ Examples:
         action='store_true',
         help='Use local development mode (webhook: http://localhost:3000/api/tvb/webhook)'
     )
-    
+
     args = parser.parse_args()
     
     # Initialize bot manager
@@ -305,10 +334,10 @@ Examples:
     
     # Run dry run or start bots
     if args.dry_run:
-        success = manager.dry_run_all(config_files, args.refresh_cache, args.local)
+        success = manager.dry_run_all(config_files, args.refresh_cache, args.local, args.network, args.private_key)
         sys.exit(0 if success else 1)
     elif args.auto:
-        manager.start_all_bots(config_files, args.refresh_cache, args.local)
+        manager.start_all_bots(config_files, args.refresh_cache, args.local, args.network, args.private_key)
     else:
         print("🤖 TVB: ✅ Multi-bot launcher ready!")
         print(f"🤖 TVB: Found {len(config_files)} bot configurations")
