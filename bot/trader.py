@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Enhanced Trading execution logic with balance and token reporting
+Enhanced Trading execution logic with streamlined webhook reporting
 """
 
 import random
 from web3 import Web3
 
 class TokenTrader:
-    """Handles all trading operations with enhanced webhook reporting"""
+    """Handles all trading operations with streamlined webhook reporting"""
     
     def __init__(self, w3, account, factory_contract, config, webhook_manager=None, verbose=False, logger=None):
         self.w3 = w3
@@ -39,7 +39,7 @@ class TokenTrader:
             self.logger.info(f"💹 Trader initialized with buy bias: {self.buy_bias:.2f}, risk: {self.risk_tolerance:.2f}")
     
     def execute_trade_decision(self, token):
-        """Make and execute a trading decision for the given token with webhook updates"""
+        """Make and execute a trading decision for the given token"""
         try:
             token_address = token['address']
             token_symbol = token['symbol']
@@ -61,28 +61,11 @@ class TokenTrader:
             if current_avax < min_trade:
                 # Force sell if we have tokens but insufficient AVAX to buy
                 if token_balance > 0:
-                    if self.webhook:
-                        self.webhook.send_update("forced_sell", {
-                            "message": f"Insufficient AVAX ({current_avax:.4f}), forced to sell {token_symbol}",
-                            "tokenSymbol": token_symbol,
-                            "tokenAddress": token_address,
-                            "reason": "insufficient_avax",
-                            "currentBalance": current_avax
-                        })
-                    
                     if self.logger:
                         self.logger.warning(f"Insufficient AVAX ({current_avax:.4f}) for buying, forcing sell of {token_symbol}")
                     
                     return self._execute_sell(token_info, token_balance, forced=True)
                 else:
-                    if self.webhook:
-                        self.webhook.send_update("insufficient_funds", {
-                            "message": f"Insufficient AVAX ({current_avax:.4f}) and no {token_symbol} to sell",
-                            "tokenSymbol": token_symbol,
-                            "tokenAddress": token_address,
-                            "currentBalance": current_avax
-                        })
-                    
                     if self.logger:
                         self.logger.warning(f"Insufficient AVAX ({current_avax:.4f}) and no {token_symbol} to sell")
                     return False
@@ -101,16 +84,6 @@ class TokenTrader:
             else:
                 if self.verbose and self.logger:
                     self.logger.info(f"⏭️ No action taken for {token_symbol}")
-                
-                # Send "hold" webhook
-                if self.webhook:
-                    self.webhook.send_update("hold", {
-                        "message": f"Holding position on {token_symbol}",
-                        "tokenSymbol": token_symbol,
-                        "tokenAddress": token_address,
-                        "decision": "hold"
-                    })
-                
                 return True
                 
         except Exception as e:
@@ -121,9 +94,9 @@ class TokenTrader:
             else:
                 print(f"🤖 TVB: ❌ {error_msg}")
             
-            # Send error webhook
+            # Send error webhook with personality message
             if self.webhook:
-                self.webhook.send_error_update(error_msg, "trade_decision", token)
+                self.webhook.send_error_update(error_msg, "trade_decision")
             
             return False
     
@@ -150,12 +123,8 @@ class TokenTrader:
             if amount_to_buy < self.min_trade_amount:
                 error_msg = f"Insufficient AVAX for minimum trade ({current_avax:.4f} AVAX available)"
                 if self.webhook:
-                    self.webhook.send_error_update(error_msg, "insufficient_funds", token_info)
+                    self.webhook.send_error_update(error_msg, "insufficient_funds")
                 return False
-            
-            # Send buy attempt webhook
-            if self.webhook:
-                self.webhook.send_trade_attempt("buy", token_info, amount_to_buy)
             
             if self.logger:
                 self.logger.trade("buy", f"{amount_to_buy:.4f} AVAX for {token_symbol}")
@@ -191,7 +160,7 @@ class TokenTrader:
                 tx_hash_hex = self.w3.to_hex(tx_hash)
                 post_trade_balance = self._get_avax_balance()
                 
-                # Send success webhook with post-trade balance
+                # Send success webhook with personality message
                 if self.webhook:
                     self.webhook.send_buy_update(
                         token_info, 
@@ -209,7 +178,7 @@ class TokenTrader:
             else:
                 error_msg = "Buy transaction failed in receipt"
                 if self.webhook:
-                    self.webhook.send_trade_failure("buy", token_info, error_msg)
+                    self.webhook.send_error_update(error_msg, "transaction_failed")
                 
                 if self.logger:
                     self.logger.error(error_msg)
@@ -221,7 +190,7 @@ class TokenTrader:
             error_msg = f"Buy execution error for {token_symbol}: {e}"
             
             if self.webhook:
-                self.webhook.send_trade_failure("buy", token_info, str(e))
+                self.webhook.send_error_update(error_msg, "buy_execution")
             
             if self.logger:
                 self.logger.error(error_msg)
@@ -248,14 +217,10 @@ class TokenTrader:
             if amount_to_sell <= 0:
                 error_msg = "Calculated sell amount is zero, skipping"
                 if self.webhook:
-                    self.webhook.send_error_update(error_msg, "zero_amount", token_info)
+                    self.webhook.send_error_update(error_msg, "zero_amount")
                 return False
             
             readable_amount = amount_to_sell / 1e18
-            
-            # Send sell attempt webhook
-            if self.webhook:
-                self.webhook.send_trade_attempt("sell", token_info, readable_amount)
             
             if self.logger:
                 self.logger.trade("sell", f"{readable_amount:.4f} {token_symbol} ({sell_percentage*100:.1f}%)")
@@ -291,7 +256,7 @@ class TokenTrader:
                 tx_hash_hex = self.w3.to_hex(tx_hash)
                 post_trade_balance = self._get_avax_balance()
                 
-                # Send success webhook with post-trade balance
+                # Send success webhook with personality message
                 if self.webhook:
                     self.webhook.send_sell_update(
                         token_info, 
@@ -311,7 +276,7 @@ class TokenTrader:
             else:
                 error_msg = "Sell transaction failed in receipt"
                 if self.webhook:
-                    self.webhook.send_trade_failure("sell", token_info, error_msg)
+                    self.webhook.send_error_update(error_msg, "transaction_failed")
                 
                 if self.logger:
                     self.logger.error(error_msg)
@@ -323,7 +288,7 @@ class TokenTrader:
             error_msg = f"Sell execution error for {token_symbol}: {e}"
             
             if self.webhook:
-                self.webhook.send_trade_failure("sell", token_info, str(e))
+                self.webhook.send_error_update(error_msg, "sell_execution")
             
             if self.logger:
                 self.logger.error(error_msg)

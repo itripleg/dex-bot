@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """
-Core bot orchestration - the main TransparentVolumeBot class
-Coordinates all bot components without doing the heavy lifting
-Enhanced with real-time balance and token tracking
+Core bot orchestration with enhanced session balance tracking
 """
 
 import time
@@ -21,8 +19,7 @@ from contracts.token import TokenContract
 
 class TransparentVolumeBot:
     """
-    Main bot orchestration class - coordinates all components
-    Enhanced with real-time balance and token tracking
+    Main bot orchestration class with enhanced session balance tracking
     """
     
     def __init__(self, config, private_key_override=None, force_cache_refresh=False, verbose=False):
@@ -50,6 +47,10 @@ class TransparentVolumeBot:
         # Initialize cache system
         self._setup_cache(force_cache_refresh)
         
+        # Session tracking
+        self.session_start_time = datetime.utcnow().isoformat() + "Z"
+        self.starting_balance = self.get_avax_balance()
+        
         # Initialize webhook manager with balance callback and bio
         self.webhook = WebhookManager(
             bot_name=self.bot_name,
@@ -61,6 +62,9 @@ class TransparentVolumeBot:
             bio=self.config.get('bio'),
             get_balance_callback=self.get_avax_balance
         )
+        
+        # Set session start in webhook manager
+        self.webhook.set_session_start(self.starting_balance, self.session_start_time)
         
         # Initialize trader with webhook manager
         self.trader = TokenTrader(
@@ -75,8 +79,6 @@ class TransparentVolumeBot:
         
         # Bot state
         self.tokens = []
-        self.session_start_time = datetime.utcnow().isoformat() + "Z"
-        self.starting_balance = self.get_avax_balance()
         
         # Load tokens
         self._load_tokens()
@@ -85,6 +87,7 @@ class TransparentVolumeBot:
         self._send_startup_notification()
         
         print(f"🤖 TVB: ✅ Bot '{self.display_name}' initialized successfully!")
+        print(f"🤖 TVB: 💰 Starting session with {self.starting_balance:.6f} AVAX")
     
     def _setup_web3_and_account(self, private_key_override):
         """Initialize Web3 connection and account"""
@@ -137,7 +140,7 @@ class TransparentVolumeBot:
         return {
             "buy": self.config.get("buyPhrases", []),
             "sell": self.config.get("sellPhrases", []),
-            "create": self.config.get("createPhrases", []),
+            "create_token": self.config.get("createPhrases", []),
             "error": self.config.get("errorPhrases", [])
         }
     
@@ -148,10 +151,9 @@ class TransparentVolumeBot:
         print(f"🤖 TVB: ✅ Loaded {len(self.tokens)} tradeable tokens")
     
     def _send_startup_notification(self):
-        """Send enhanced startup notification"""
+        """Send enhanced startup notification with session balance"""
         startup_info = {
             "message": f"{self.display_name} is now online and ready to trade!",
-            "startingBalance": self.starting_balance,
             "sessionStarted": self.session_start_time,
             "tokensFound": len(self.tokens),
             "config": {
@@ -191,24 +193,14 @@ class TransparentVolumeBot:
         balance_wei = self.w3.eth.get_balance(self.account.address)
         return float(self.w3.from_wei(balance_wei, 'ether'))
     
+    def get_session_metrics(self):
+        """Get comprehensive session financial metrics"""
+        return self.webhook.get_session_summary()
+    
     def refresh_tokens(self):
         """Refresh token list (public method for external calls)"""
         print("🤖 TVB: 🔄 Refreshing token list...")
-        
-        # Send webhook notification
-        self.webhook.send_update("token_refresh_start", {
-            "message": "Refreshing token list...",
-            "previousTokenCount": len(self.tokens)
-        })
-        
         self.tokens = self.token_loader.load_tokens_optimized()
-        
-        # Send completion webhook
-        self.webhook.send_update("token_refresh_complete", {
-            "message": f"Token refresh complete: {len(self.tokens)} tokens available",
-            "tokensFound": len(self.tokens)
-        })
-        
         print(f"🤖 TVB: ✅ Refreshed: {len(self.tokens)} tradeable tokens")
     
     def force_cache_refresh(self):
@@ -222,7 +214,7 @@ class TransparentVolumeBot:
         return self.cache.get_stats()
     
     def execute_trade_cycle(self):
-        """Execute one complete trading cycle with enhanced webhook reporting"""
+        """Execute one complete trading cycle with minimal webhook noise"""
         if self.verbose:
             print(f"\n🤖 TVB: --- Starting Trade Cycle ---")
         
@@ -235,67 +227,37 @@ class TransparentVolumeBot:
         # Check if we have tokens to trade
         if not self.tokens:
             print("🤖 TVB: ⏭️ No tradeable tokens, refreshing list...")
-            self.webhook.send_update("token_refresh", {
-                "message": "No tradeable tokens found, refreshing list...",
-                "reason": "empty_token_list"
-            })
             self.refresh_tokens()
             if not self.tokens:
                 print("🤖 TVB: ⏭️ Still no tokens found, waiting...")
-                self.webhook.send_update("no_tokens", {
-                    "message": "Still no tradeable tokens found after refresh",
-                    "tokensFound": 0
-                })
                 return
         
         # Select random token and execute trade
         token = random.choice(self.tokens)
         
-        # Send cycle start webhook with selected token
-        self.webhook.send_update("cycle_start", {
-            "message": f"Starting trade cycle for {token['symbol']}",
-            "selectedToken": {
-                "address": token['address'],
-                "symbol": token['symbol'],
-                "name": token.get('name', token['symbol'])
-            },
-            "totalTokens": len(self.tokens)
-        })
+        if self.verbose:
+            print(f"🤖 TVB: 🎯 Selected token: {token['symbol']} ({token['address'][:10]}...)")
         
         success = self.trader.execute_trade_decision(token)
         
         if success and self.verbose:
             print(f"🤖 TVB: ✅ Trade cycle completed for {token['symbol']}")
-        
-        # Send cycle completion webhook
-        self.webhook.send_update("cycle_complete", {
-            "message": f"Trade cycle completed for {token['symbol']}",
-            "success": success,
-            "tokenSymbol": token['symbol'],
-            "tokenAddress": token['address']
-        })
     
     def _attempt_token_creation(self):
-        """Attempt to create a new token with webhook updates"""
+        """Attempt to create a new token with personality-driven webhook"""
         print("🤖 TVB: 🎨 Considering token creation...")
         
         current_balance = self.get_avax_balance()
         min_creation_balance = 0.1  # Require at least 0.1 AVAX for token creation
         
         if current_balance < min_creation_balance:
-            self.webhook.send_update("creation_cancelled", {
-                "message": f"Insufficient AVAX for token creation ({current_balance:.4f} < {min_creation_balance})",
-                "reason": "insufficient_balance",
-                "currentBalance": current_balance,
-                "requiredBalance": min_creation_balance
-            })
+            if self.verbose:
+                print(f"🤖 TVB: ⚠️ Insufficient AVAX for token creation ({current_balance:.4f} < {min_creation_balance})")
             return
         
-        # For now, just send webhook (token creation can be implemented later)
+        # Send personality-driven token creation message
         self.webhook.send_update("create_token", {
-            "message": "Considering creating a new token...",
-            "status": "planned",
-            "currentBalance": current_balance
+            "status": "planned"
         })
         
         # TODO: Implement actual token creation logic
@@ -303,12 +265,11 @@ class TransparentVolumeBot:
             print("🤖 TVB: 💡 Token creation logic not yet implemented")
     
     def send_heartbeat(self):
-        """Send periodic heartbeat update with enhanced balance info"""
-        current_balance = self.get_avax_balance()
-        balance_change = current_balance - self.starting_balance
+        """Send periodic heartbeat update with session metrics"""
         cache_stats = self.get_cache_stats()
         
-        # Check for low balance alert
+        # Check for low balance alert (but don't spam)
+        current_balance = self.get_avax_balance()
         min_trade_amount = self.config.get('minTradeAmount', 0.005)
         if current_balance < min_trade_amount * 2:
             self.webhook.send_balance_alert(
@@ -317,24 +278,31 @@ class TransparentVolumeBot:
                 alert_type="low"
             )
         
-        # Calculate session duration
-        session_start = datetime.fromisoformat(self.session_start_time.replace('Z', ''))
-        session_duration_minutes = int((datetime.utcnow() - session_start).total_seconds() / 60)
+        # Send enhanced heartbeat with session metrics
+        self.webhook.send_heartbeat(
+            balance_info={}, # Not needed anymore, webhook calculates it
+            token_count=len(self.tokens),
+            extra_data={
+                "minTradeAmount": min_trade_amount,
+                "cacheStats": {
+                    "cached_tokens": cache_stats["cached_tokens"],
+                    "hit_rate": f"{cache_stats.get('cache_hits', 0) / max(1, cache_stats.get('cache_hits', 0) + cache_stats.get('cache_misses', 0)) * 100:.1f}%"
+                }
+            }
+        )
+    
+    def print_session_summary(self):
+        """Print comprehensive session summary"""
+        print(f"\n🤖 TVB: 📊 {self.display_name} Session Summary:")
+        print(f"  👤 Account: {self.account.address}")
         
-        # Send enhanced heartbeat with detailed balance info
-        self.webhook.send_heartbeat({
-            "current": current_balance,
-            "change": balance_change,
-            "starting": self.starting_balance,
-            "percentage_change": (balance_change / self.starting_balance * 100) if self.starting_balance > 0 else 0
-        }, len(self.tokens), {
-            "minTradeAmount": min_trade_amount,
-            "cacheStats": {
-                "cached_tokens": cache_stats["cached_tokens"],
-                "hit_rate": f"{cache_stats.get('cache_hits', 0) / max(1, cache_stats.get('cache_hits', 0) + cache_stats.get('cache_misses', 0)) * 100:.1f}%"
-            },
-            "session_duration_minutes": session_duration_minutes
-        })
+        # Get session metrics from webhook manager
+        self.webhook.print_session_summary()
+        
+        # Additional bot-specific info
+        print(f"  🎯 Tokens Tracked: {len(self.tokens)}")
+        cache_stats = self.get_cache_stats()
+        print(f"  💾 Cache Hit Rate: {cache_stats.get('cache_hits', 0) / max(1, cache_stats.get('cache_hits', 0) + cache_stats.get('cache_misses', 0)) * 100:.1f}%")
     
     def run(self):
         """Main bot execution loop"""
@@ -344,6 +312,7 @@ class TransparentVolumeBot:
         cycle_count = 0
         last_heartbeat = time.time()
         last_token_refresh = time.time()
+        last_summary = time.time()
         
         try:
             while True:
@@ -353,7 +322,7 @@ class TransparentVolumeBot:
                 if self.verbose:
                     print(f"\n🤖 TVB: [{timestamp}] 🔄 Cycle #{cycle_count}")
                 
-                # Execute trading cycle
+                # Execute trading cycle (trader handles its own webhooks)
                 self.execute_trade_cycle()
                 
                 # Send heartbeat every 5 minutes
@@ -361,8 +330,16 @@ class TransparentVolumeBot:
                     self.send_heartbeat()
                     last_heartbeat = time.time()
                 
-                # Refresh token list every 30 minutes
+                # Print session summary every 30 minutes
+                if time.time() - last_summary > 1800:  # 30 minutes
+                    if self.verbose:
+                        self.print_session_summary()
+                    last_summary = time.time()
+                
+                # Refresh token list every 30 minutes (silently)
                 if time.time() - last_token_refresh > 1800:  # 30 minutes
+                    if self.verbose:
+                        print("🤖 TVB: 🔄 Scheduled token refresh...")
                     self.refresh_tokens()
                     last_token_refresh = time.time()
                 
@@ -385,23 +362,11 @@ class TransparentVolumeBot:
     
     def _handle_shutdown(self, cycle_count, reason, error_msg=None):
         """Handle bot shutdown gracefully with enhanced reporting"""
-        final_balance = self.get_avax_balance()
-        total_pnl = final_balance - self.starting_balance
-        pnl_percentage = (total_pnl / self.starting_balance * 100) if self.starting_balance > 0 else 0
-        
-        # Calculate session duration
-        session_start = datetime.fromisoformat(self.session_start_time.replace('Z', ''))
-        session_duration = datetime.utcnow() - session_start
-        session_hours = session_duration.total_seconds() / 3600
+        session_metrics = self.get_session_metrics()
         
         shutdown_info = {
             "totalCycles": cycle_count,
-            "finalBalance": final_balance,
-            "startingBalance": self.starting_balance,
-            "totalPnL": total_pnl,
-            "pnlPercentage": pnl_percentage,
-            "sessionDurationHours": session_hours,
-            "sessionStarted": self.session_start_time
+            "sessionMetrics": session_metrics
         }
         
         if reason == "user":
@@ -425,12 +390,8 @@ class TransparentVolumeBot:
         
         # Print final stats
         if self.verbose:
-            print(f"🤖 TVB: 📊 Final Session Stats:")
-            print(f"  💰 Starting Balance: {self.starting_balance:.6f} AVAX")
-            print(f"  💰 Final Balance: {final_balance:.6f} AVAX") 
-            print(f"  📈 Total P&L: {total_pnl:+.6f} AVAX ({pnl_percentage:+.2f}%)")
-            print(f"  🔄 Total Cycles: {cycle_count}")
-            print(f"  ⏰ Session Duration: {session_hours:.2f} hours")
+            self.print_session_summary()
+            print(f"🤖 TVB: 🔄 Total Cycles: {cycle_count}")
             self.cache.print_stats()
 
 
