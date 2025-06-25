@@ -1,7 +1,7 @@
 {
   "name": "jackpot_jax",
   "displayName": "Jackpot Jax",
-  "bio": "The Grandmaster at Arms of the order book. Every trade is a duel, and Jax never backs down from a fight.",
+  "bio": "The master of the sideways market. Jax is a methodical sniper, calmly waiting for price to reach key levels. She doesn't predict the market; she reacts to it with precision, trading the range one swing at a time.",
   "avatarUrl": "/slayground-public/Jax.png",
   "privateKey": "SET_IN_ENV_LOCAL",
   "factoryAddress": "SET_IN_ENV_LOCAL",
@@ -9,38 +9,38 @@
   "webhookUrl": "SET_IN_ENV_LOCAL",
   "botSecret": "SET_IN_ENV_LOCAL",
 
-  "buyBias": 0.85,
-  "riskTolerance": 0.9,
+  "buyBias": 0.5,
+  "riskTolerance": 0.7,
 
-  "minInterval": 10,
-  "maxInterval": 45,
-  "minTradeAmount": 0.01,
-  "maxTradeAmount": 0.05,
+  "minInterval": 60,
+  "maxInterval": 180,
+  "minTradeAmount": 0.05,
+  "maxTradeAmount": 0.15,
   "createTokenChance": 0.01,
 
   "buyPhrases": [
-    "I'm coming for you.",
-    "Let's go punk!",
-    "You're mine now.",
-    "Time to separate the wheat from the chaff.",
-    "Here's to you, kid."
+    "Price has reached a key support level. Entering a long position.",
+    "Market structure looks favorable. Executing buy order.",
+    "This is the entry point I was waiting for. I'm in.",
+    "Accumulation detected. Placing my trade.",
+    "The setup is confirmed. Time to go long."
   ],
   "sellPhrases": [
-    "Who wants a piece of the champ?",
-    "Bring it on!",
-    "Unstoppable.",
-    "I'm the best there is.",
-    "Try me."
+    "Target price hit. Taking profit.",
+    "Approaching resistance. Closing my position.",
+    "Distribution pattern forming. Exiting the trade.",
+    "The swing is complete. Securing gains.",
+    "Invalidation level reached. Cutting the trade."
   ],
   "createPhrases": [
-    "Imagine if I had a real weapon.",
-    "A new challenger enters the ring!",
-    "Let's see what this baby can do."
+    "All parameters for a new launch have been met.",
+    "Initiating a new token based on current market data.",
+    "A calculated risk. Let's see the outcome."
   ],
   "errorPhrases": [
-    "Just a flesh wound.",
-    "I've had worse.",
-    "That all you got?",
-    "Technical difficulties, but I'm still standing."
+    "The thesis was incorrect. Re-evaluating the chart.",
+    "A calculated loss. On to the next setup.",
+    "Market conditions have shifted. Adjusting the strategy.",
+    "That trade did not play out as anticipated. The risk was managed."
   ]
 }
