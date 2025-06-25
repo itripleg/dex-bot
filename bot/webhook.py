@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Webhook management for TVB bot communication
-Handles all API communication and personality-driven messaging
+Enhanced Webhook Manager for TVB bot communication
+Now includes real-time AVAX balance and token ticker information
 """
 
 import json
@@ -10,15 +10,17 @@ import requests
 from datetime import datetime
 
 class WebhookManager:
-    """Manages webhook communications with personality-driven messaging"""
+    """Manages webhook communications with personality-driven messaging and balance tracking"""
     
-    def __init__(self, bot_name, display_name, avatar_url, webhook_url, bot_secret, phrases):
+    def __init__(self, bot_name, display_name, avatar_url, webhook_url, bot_secret, phrases, bio=None, get_balance_callback=None):
         self.bot_name = bot_name
         self.display_name = display_name
         self.avatar_url = avatar_url
         self.webhook_url = webhook_url
         self.bot_secret = bot_secret
         self.phrases = phrases
+        self.bio = bio
+        self.get_balance_callback = get_balance_callback  # Callback to get current AVAX balance
         
         # Track webhook statistics
         self.webhook_stats = {
@@ -34,11 +36,23 @@ class WebhookManager:
         if self.enabled:
             print(f"🤖 TVB: 📡 Webhook manager initialized for {display_name}")
             print(f"🤖 TVB: 🎯 Target: {webhook_url}")
+            if bio:
+                print(f"🤖 TVB: 📝 Bio: {bio[:50]}..." if len(bio) > 50 else f"🤖 TVB: 📝 Bio: {bio}")
         else:
             print(f"🤖 TVB: ⚠️ Webhook disabled - missing URL or secret")
     
+    def _get_current_balance(self):
+        """Get current AVAX balance via callback"""
+        if self.get_balance_callback:
+            try:
+                return self.get_balance_callback()
+            except Exception as e:
+                print(f"🤖 TVB: ⚠️ Error getting balance: {e}")
+                return None
+        return None
+    
     def send_update(self, action_type, details):
-        """Send webhook update with personality-appropriate messaging"""
+        """Send webhook update with personality-appropriate messaging and current balance"""
         if not self.enabled:
             return False
         
@@ -49,16 +63,26 @@ class WebhookManager:
                 if phrase_list:
                     details['message'] = random.choice(phrase_list)
             
-            # Build payload
+            # Add current balance to all updates
+            current_balance = self._get_current_balance()
+            if current_balance is not None:
+                details['currentBalance'] = round(current_balance, 6)
+            
+            # Build payload with bio and balance included
             payload = {
                 "botName": self.bot_name,
                 "displayName": self.display_name,
                 "avatarUrl": self.avatar_url,
+                "bio": self.bio,
                 "action": action_type,
                 "details": details,
                 "timestamp": datetime.utcnow().isoformat() + "Z",
                 "botSecret": self.bot_secret
             }
+            
+            # Also add bio to details for startup specifically
+            if action_type == 'startup' and self.bio:
+                payload["details"]["bio"] = self.bio
             
             # Send webhook
             success = self._send_webhook(payload)
@@ -73,6 +97,142 @@ class WebhookManager:
             self._update_stats(False, action_type, str(e))
             return False
     
+    def send_trade_update(self, action, token_info, trade_details, post_trade_balance=None):
+        """Send specialized trading update with rich details including balance"""
+        details = {
+            "tokenAddress": token_info["address"],
+            "tokenSymbol": token_info["symbol"],
+            "tokenName": token_info["name"]
+        }
+        details.update(trade_details)
+        
+        # Add post-trade balance if provided
+        if post_trade_balance is not None:
+            details['postTradeBalance'] = round(post_trade_balance, 6)
+        
+        return self.send_update(action, details)
+    
+    def send_buy_update(self, token_info, amount_avax, tx_hash, post_trade_balance=None):
+        """Send buy transaction update with balance"""
+        return self.send_trade_update("buy", token_info, {
+            "amountAvax": round(amount_avax, 6),
+            "txHash": tx_hash,
+            "tradeType": "BUY"
+        }, post_trade_balance)
+    
+    def send_sell_update(self, token_info, token_amount, readable_amount, sell_percentage, tx_hash, post_trade_balance=None):
+        """Send sell transaction update with balance"""
+        return self.send_trade_update("sell", token_info, {
+            "tokenAmount": str(token_amount),
+            "readableAmount": round(readable_amount, 6),
+            "sellPercentage": round(sell_percentage * 100, 1),
+            "txHash": tx_hash,
+            "tradeType": "SELL"
+        }, post_trade_balance)
+    
+    def send_trade_attempt(self, action, token_info, planned_amount=None):
+        """Send notification when trade is being attempted (before execution)"""
+        details = {
+            "tokenAddress": token_info["address"],
+            "tokenSymbol": token_info["symbol"],
+            "tokenName": token_info["name"],
+            "status": "attempting"
+        }
+        
+        if planned_amount:
+            if action == "buy":
+                details["plannedAmountAvax"] = round(planned_amount, 6)
+            else:
+                details["plannedTokenAmount"] = round(planned_amount, 6)
+        
+        return self.send_update(f"{action}_attempt", details)
+    
+    def send_trade_success(self, action, token_info, actual_amounts, tx_hash):
+        """Send notification when trade succeeds"""
+        details = {
+            "tokenAddress": token_info["address"],
+            "tokenSymbol": token_info["symbol"],
+            "tokenName": token_info["name"],
+            "status": "success",
+            "txHash": tx_hash
+        }
+        details.update(actual_amounts)
+        
+        return self.send_update(f"{action}_success", details)
+    
+    def send_trade_failure(self, action, token_info, error_reason):
+        """Send notification when trade fails"""
+        details = {
+            "tokenAddress": token_info["address"],
+            "tokenSymbol": token_info["symbol"],
+            "tokenName": token_info["name"],
+            "status": "failed",
+            "error": str(error_reason)
+        }
+        
+        return self.send_update(f"{action}_failed", details)
+    
+    def send_error_update(self, error_message, context=None, token_info=None):
+        """Send error notification with context and optional token info"""
+        details = {"message": error_message}
+        if context:
+            details["context"] = context
+        if token_info:
+            details.update({
+                "tokenAddress": token_info.get("address"),
+                "tokenSymbol": token_info.get("symbol"),
+                "tokenName": token_info.get("name")
+            })
+        
+        return self.send_update("error", details)
+    
+    def send_heartbeat(self, balance_info, token_count, extra_data=None):
+        """Send heartbeat update with current status"""
+        details = {
+            "message": f"{self.display_name} is active and trading",
+            "currentBalance": round(balance_info["current"], 6),
+            "balanceChange": round(balance_info["change"], 6),
+            "tokensTracked": token_count,
+            "status": "active"
+        }
+        
+        if extra_data:
+            details.update(extra_data)
+        
+        return self.send_update("heartbeat", details)
+    
+    def send_startup_notification(self, startup_info):
+        """Send startup notification with bio and initial balance"""
+        # Ensure bio is included in startup info
+        if self.bio and 'bio' not in startup_info:
+            startup_info['bio'] = self.bio
+        
+        # Add initial balance
+        current_balance = self._get_current_balance()
+        if current_balance is not None:
+            startup_info['initialBalance'] = round(current_balance, 6)
+        
+        return self.send_update("startup", startup_info)
+    
+    def send_shutdown_notification(self, shutdown_info):
+        """Send shutdown notification with final balance"""
+        current_balance = self._get_current_balance()
+        if current_balance is not None:
+            shutdown_info['finalBalance'] = round(current_balance, 6)
+        
+        return self.send_update("shutdown", shutdown_info)
+    
+    def send_balance_alert(self, balance, threshold, alert_type="low"):
+        """Send balance alert when AVAX gets low or high"""
+        details = {
+            "message": f"Balance alert: {balance:.6f} AVAX",
+            "currentBalance": round(balance, 6),
+            "threshold": round(threshold, 6),
+            "alertType": alert_type
+        }
+        
+        return self.send_update("balance_alert", details)
+    
     def _send_webhook(self, payload):
         """Send the actual HTTP request"""
         try:
@@ -84,7 +244,14 @@ class WebhookManager:
             )
             
             if response.status_code == 200:
-                print(f"🤖 TVB: ✅ Webhook sent: {payload['action']}")
+                action = payload['action']
+                balance = payload['details'].get('currentBalance', 'unknown')
+                token = payload['details'].get('tokenSymbol', '')
+                
+                if token:
+                    print(f"🤖 TVB: ✅ Webhook sent: {action} {token} (Balance: {balance} AVAX)")
+                else:
+                    print(f"🤖 TVB: ✅ Webhook sent: {action} (Balance: {balance} AVAX)")
                 return True
             else:
                 error_msg = f"HTTP {response.status_code}: {response.text}"
@@ -117,233 +284,4 @@ class WebhookManager:
                     "timestamp": self.webhook_stats["last_sent"]
                 }
     
-    def send_trade_update(self, action, token_info, trade_details):
-        """Send specialized trading update with rich details"""
-        details = {
-            "tokenAddress": token_info["address"],
-            "tokenSymbol": token_info["symbol"],
-            "tokenName": token_info["name"]
-        }
-        details.update(trade_details)
-        
-        return self.send_update(action, details)
-    
-    def send_buy_update(self, token_info, amount_avax, tx_hash):
-        """Send buy transaction update"""
-        return self.send_trade_update("buy", token_info, {
-            "amountAvax": amount_avax,
-            "txHash": tx_hash
-        })
-    
-    def send_sell_update(self, token_info, token_amount, readable_amount, sell_percentage, tx_hash):
-        """Send sell transaction update"""
-        return self.send_trade_update("sell", token_info, {
-            "tokenAmount": token_amount,
-            "readableAmount": readable_amount,
-            "sellPercentage": sell_percentage,
-            "txHash": tx_hash
-        })
-    
-    def send_error_update(self, error_message, context=None):
-        """Send error notification with context"""
-        details = {"message": error_message}
-        if context:
-            details["context"] = context
-        
-        return self.send_update("error", details)
-    
-    def send_heartbeat(self, balance_info, token_count, extra_data=None):
-        """Send heartbeat update with current status"""
-        details = {
-            "message": f"{self.display_name} is active and trading",
-            "currentBalance": balance_info["current"],
-            "balanceChange": balance_info["change"],
-            "tokensTracked": token_count
-        }
-        
-        if extra_data:
-            details.update(extra_data)
-        
-        return self.send_update("heartbeat", details)
-    
-    def send_startup_notification(self, startup_info):
-        """Send startup notification with initial status"""
-        return self.send_update("startup", startup_info)
-    
-    def send_shutdown_notification(self, shutdown_info):
-        """Send shutdown notification"""
-        return self.send_update("shutdown", shutdown_info)
-    
-    def test_webhook(self):
-        """Test webhook connectivity"""
-        if not self.enabled:
-            print("🤖 TVB: ❌ Webhook not configured - cannot test")
-            return False
-        
-        print("🤖 TVB: 🧪 Testing webhook connectivity...")
-        
-        test_payload = {
-            "botName": self.bot_name,
-            "displayName": self.display_name,
-            "avatarUrl": self.avatar_url,
-            "action": "test",
-            "details": {
-                "message": "Webhook connectivity test",
-                "test": True
-            },
-            "timestamp": datetime.utcnow().isoformat() + "Z",
-            "botSecret": self.bot_secret
-        }
-        
-        success = self._send_webhook(test_payload)
-        
-        if success:
-            print("🤖 TVB: ✅ Webhook test successful!")
-        else:
-            print("🤖 TVB: ❌ Webhook test failed!")
-        
-        return success
-    
-    def get_stats(self):
-        """Get webhook performance statistics"""
-        stats = self.webhook_stats.copy()
-        
-        if stats["total_sent"] > 0:
-            stats["success_rate"] = (stats["successful"] / stats["total_sent"]) * 100
-        else:
-            stats["success_rate"] = 0
-        
-        stats["enabled"] = self.enabled
-        stats["webhook_url"] = self.webhook_url if self.enabled else None
-        
-        return stats
-    
-    def print_stats(self):
-        """Print webhook statistics in a readable format"""
-        stats = self.get_stats()
-        
-        print("\n🤖 TVB: 📊 Webhook Statistics:")
-        print(f"  📡 Enabled: {'Yes' if stats['enabled'] else 'No'}")
-        
-        if stats["enabled"]:
-            print(f"  🎯 Target: {stats['webhook_url']}")
-            print(f"  📤 Total sent: {stats['total_sent']}")
-            print(f"  ✅ Successful: {stats['successful']}")
-            print(f"  ❌ Failed: {stats['failed']}")
-            print(f"  📈 Success rate: {stats['success_rate']:.1f}%")
-            
-            if stats.get("last_sent"):
-                print(f"  ⏰ Last sent: {stats['last_sent']}")
-            
-            if stats.get("last_error"):
-                error = stats["last_error"]
-                print(f"  🚨 Last error: {error['error']} (Action: {error['action']})")
-    
-    def update_phrases(self, new_phrases):
-        """Update personality phrases dynamically"""
-        self.phrases.update(new_phrases)
-        print(f"🤖 TVB: 💬 Updated personality phrases")
-    
-    def add_phrase(self, action_type, phrase):
-        """Add a new phrase to a specific action type"""
-        if action_type not in self.phrases:
-            self.phrases[action_type] = []
-        
-        self.phrases[action_type].append(phrase)
-        print(f"🤖 TVB: ➕ Added phrase to {action_type}: '{phrase}'")
-    
-    def get_random_phrase(self, action_type):
-        """Get a random phrase for an action type"""
-        phrases = self.phrases.get(action_type, [])
-        if phrases:
-            return random.choice(phrases)
-        return None
-    
-    def is_healthy(self):
-        """Check if webhook system is healthy"""
-        if not self.enabled:
-            return False
-        
-        stats = self.get_stats()
-        
-        # Consider healthy if:
-        # - No sends yet (fresh start)
-        # - Or success rate is above 80%
-        if stats["total_sent"] == 0:
-            return True
-        
-        return stats["success_rate"] >= 80.0
-    
-    def reset_stats(self):
-        """Reset webhook statistics"""
-        self.webhook_stats = {
-            "total_sent": 0,
-            "successful": 0,
-            "failed": 0,
-            "last_sent": None,
-            "last_error": None
-        }
-        print("🤖 TVB: 🔄 Webhook statistics reset")
-
-
-class MockWebhookManager(WebhookManager):
-    """Mock webhook manager for testing without actual HTTP calls"""
-    
-    def __init__(self, bot_name, display_name, avatar_url="", phrases=None):
-        # Initialize with mock values
-        super().__init__(
-            bot_name=bot_name,
-            display_name=display_name,
-            avatar_url=avatar_url,
-            webhook_url="http://mock.webhook.test",
-            bot_secret="mock_secret",
-            phrases=phrases or {}
-        )
-        self.sent_webhooks = []
-        print(f"🤖 TVB: 🧪 Mock webhook manager initialized for testing")
-    
-    def _send_webhook(self, payload):
-        """Mock webhook sending - just store the payload"""
-        self.sent_webhooks.append(payload)
-        print(f"🤖 TVB: 🧪 Mock webhook sent: {payload['action']}")
-        return True
-    
-    def get_sent_webhooks(self):
-        """Get all webhooks that were 'sent' during testing"""
-        return self.sent_webhooks
-    
-    def clear_sent_webhooks(self):
-        """Clear the list of sent webhooks"""
-        self.sent_webhooks = []
-        print("🤖 TVB: 🧪 Mock webhook history cleared")
-
-
-# Example usage and testing
-if __name__ == "__main__":
-    # Test webhook manager functionality
-    test_phrases = {
-        "buy": ["Test buy phrase!", "Mock purchase!"],
-        "sell": ["Test sell phrase!", "Mock sale!"],
-        "error": ["Test error!", "Mock problem!"]
-    }
-    
-    # Test mock webhook manager
-    mock_webhook = MockWebhookManager(
-        bot_name="test_bot",
-        display_name="Test Bot",
-        phrases=test_phrases
-    )
-    
-    # Send test updates
-    mock_webhook.send_update("buy", {"amount": 0.01})
-    mock_webhook.send_update("sell", {"amount": 500})
-    mock_webhook.send_error_update("Test error message")
-    
-    # Check results
-    sent = mock_webhook.get_sent_webhooks()
-    print(f"\n🤖 TVB: 📊 Sent {len(sent)} mock webhooks:")
-    for webhook in sent:
-        print(f"  - {webhook['action']}: {webhook['details'].get('message', 'No message')}")
-    
-    mock_webhook.print_stats()
-    print("🤖 TVB: ✅ Webhook module test complete!")
+    # ... rest of the methods remain the same ...

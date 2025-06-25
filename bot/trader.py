@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
 """
-Trading execution logic for the Transparent Volume Bot
-Handles buy/sell decisions and transaction execution with bot-specific logging
+Enhanced Trading execution logic with balance and token reporting
 """
 
 import random
 from web3 import Web3
 
 class TokenTrader:
-    """Handles all trading operations and decision logic"""
+    """Handles all trading operations with enhanced webhook reporting"""
     
-    def __init__(self, w3, account, factory_contract, config, verbose=False, logger=None):
+    def __init__(self, w3, account, factory_contract, config, webhook_manager=None, verbose=False, logger=None):
         self.w3 = w3
         self.account = account
         self.factory_contract = factory_contract
         self.config = config
+        self.webhook = webhook_manager  # Add webhook manager
         self.verbose = verbose
-        self.logger = logger  # Bot-specific logger
+        self.logger = logger
         
         # Trading parameters from config
         self.buy_bias = config.get('buyBias', 0.6)
@@ -39,32 +39,52 @@ class TokenTrader:
             self.logger.info(f"💹 Trader initialized with buy bias: {self.buy_bias:.2f}, risk: {self.risk_tolerance:.2f}")
     
     def execute_trade_decision(self, token):
-        """Make and execute a trading decision for the given token"""
+        """Make and execute a trading decision for the given token with webhook updates"""
         try:
             token_address = token['address']
             token_symbol = token['symbol']
+            token_name = token.get('name', token_symbol)
             
-            # Get current token balance
+            # Create token info dict for webhooks
+            token_info = {
+                "address": token_address,
+                "symbol": token_symbol,
+                "name": token_name
+            }
+            
+            # Get current balances
             token_balance = self._get_token_balance(token_address)
-            
-            # Check if we have enough AVAX for minimum trade
             current_avax = self._get_avax_balance()
             min_trade = self.min_trade_amount
             
+            # Check if we have enough AVAX for minimum trade
             if current_avax < min_trade:
                 # Force sell if we have tokens but insufficient AVAX to buy
                 if token_balance > 0:
+                    if self.webhook:
+                        self.webhook.send_update("forced_sell", {
+                            "message": f"Insufficient AVAX ({current_avax:.4f}), forced to sell {token_symbol}",
+                            "tokenSymbol": token_symbol,
+                            "tokenAddress": token_address,
+                            "reason": "insufficient_avax",
+                            "currentBalance": current_avax
+                        })
+                    
                     if self.logger:
                         self.logger.warning(f"Insufficient AVAX ({current_avax:.4f}) for buying, forcing sell of {token_symbol}")
-                    else:
-                        print(f"🤖 TVB: ⚠️ Insufficient AVAX ({current_avax:.4f}) for buying, forcing sell of {token_symbol}")
                     
-                    return self._execute_sell(token, token_balance)
+                    return self._execute_sell(token_info, token_balance, forced=True)
                 else:
+                    if self.webhook:
+                        self.webhook.send_update("insufficient_funds", {
+                            "message": f"Insufficient AVAX ({current_avax:.4f}) and no {token_symbol} to sell",
+                            "tokenSymbol": token_symbol,
+                            "tokenAddress": token_address,
+                            "currentBalance": current_avax
+                        })
+                    
                     if self.logger:
                         self.logger.warning(f"Insufficient AVAX ({current_avax:.4f}) and no {token_symbol} to sell")
-                    else:
-                        print(f"🤖 TVB: ⚠️ Insufficient AVAX ({current_avax:.4f}) and no {token_symbol} to sell")
                     return False
             
             # Make trading decision based on personality and holdings
@@ -75,54 +95,42 @@ class TokenTrader:
                 self.logger.info(f"🎲 Decision for {token_symbol}: {action.upper()} (balance: {balance_display:.4f})")
             
             if action == 'buy':
-                return self._execute_buy(token)
+                return self._execute_buy(token_info)
             elif action == 'sell':
-                return self._execute_sell(token, token_balance)
+                return self._execute_sell(token_info, token_balance)
             else:
                 if self.verbose and self.logger:
                     self.logger.info(f"⏭️ No action taken for {token_symbol}")
+                
+                # Send "hold" webhook
+                if self.webhook:
+                    self.webhook.send_update("hold", {
+                        "message": f"Holding position on {token_symbol}",
+                        "tokenSymbol": token_symbol,
+                        "tokenAddress": token_address,
+                        "decision": "hold"
+                    })
+                
                 return True
                 
         except Exception as e:
+            error_msg = f"Trade decision error for {token.get('symbol', 'Unknown')}: {e}"
+            
             if self.logger:
-                self.logger.error(f"Trade decision error for {token.get('symbol', 'Unknown')}: {e}")
+                self.logger.error(error_msg)
             else:
-                print(f"🤖 TVB: ❌ Trade decision error for {token.get('symbol', 'Unknown')}: {e}")
+                print(f"🤖 TVB: ❌ {error_msg}")
+            
+            # Send error webhook
+            if self.webhook:
+                self.webhook.send_error_update(error_msg, "trade_decision", token)
+            
             return False
     
-    def _decide_trade_action(self, token_balance):
-        """Decide whether to buy, sell, or hold based on personality and balance"""
-        has_tokens = token_balance > 0
-        
-        if has_tokens:
-            # If we have tokens, personality determines if we sell
-            # Higher buy_bias = less likely to sell
-            sell_probability = 1.0 - self.buy_bias
-            
-            # Add some randomness based on risk tolerance
-            sell_probability += (random.random() - 0.5) * (1.0 - self.risk_tolerance)
-            sell_probability = max(0.0, min(1.0, sell_probability))  # Clamp to [0,1]
-            
-            if random.random() < sell_probability:
-                return 'sell'
-        
-        # Default to buy (influenced by buy_bias)
-        # Higher buy_bias = more likely to buy
-        buy_probability = self.buy_bias
-        
-        # Add risk tolerance influence
-        buy_probability += (random.random() - 0.5) * self.risk_tolerance
-        buy_probability = max(0.0, min(1.0, buy_probability))  # Clamp to [0,1]
-        
-        if random.random() < buy_probability:
-            return 'buy'
-        
-        return 'hold'
-    
-    def _execute_buy(self, token):
-        """Execute a buy transaction"""
-        token_address = token['address']
-        token_symbol = token['symbol']
+    def _execute_buy(self, token_info):
+        """Execute a buy transaction with webhook updates"""
+        token_address = token_info['address']
+        token_symbol = token_info['symbol']
         
         try:
             # Calculate buy amount based on risk tolerance
@@ -138,16 +146,17 @@ class TokenTrader:
                 amount_to_buy = current_avax * 0.5
                 if self.logger:
                     self.logger.warning("Adjusted buy amount to preserve AVAX balance")
-                else:
-                    print(f"🤖 TVB: ⚠️  Adjusted buy amount to preserve AVAX balance")
             
             if amount_to_buy < self.min_trade_amount:
-                if self.logger:
-                    self.logger.warning(f"Insufficient AVAX for minimum trade ({current_avax:.4f} AVAX available)")
-                else:
-                    print(f"🤖 TVB: ⏭️ Insufficient AVAX for minimum trade size ({current_avax:.4f} AVAX available)")
+                error_msg = f"Insufficient AVAX for minimum trade ({current_avax:.4f} AVAX available)"
+                if self.webhook:
+                    self.webhook.send_error_update(error_msg, "insufficient_funds", token_info)
                 return False
-                
+            
+            # Send buy attempt webhook
+            if self.webhook:
+                self.webhook.send_trade_attempt("buy", token_info, amount_to_buy)
+            
             if self.logger:
                 self.logger.trade("buy", f"{amount_to_buy:.4f} AVAX for {token_symbol}")
             else:
@@ -180,47 +189,74 @@ class TokenTrader:
             
             if receipt.status == 1:
                 tx_hash_hex = self.w3.to_hex(tx_hash)
+                post_trade_balance = self._get_avax_balance()
+                
+                # Send success webhook with post-trade balance
+                if self.webhook:
+                    self.webhook.send_buy_update(
+                        token_info, 
+                        amount_to_buy, 
+                        tx_hash_hex, 
+                        post_trade_balance
+                    )
+                
                 if self.logger:
-                    self.logger.success(f"Buy successful! TX: {tx_hash_hex}")
+                    self.logger.success(f"Buy successful! TX: {tx_hash_hex} | New balance: {post_trade_balance:.6f} AVAX")
                 else:
-                    print(f"🤖 TVB: ✅ Buy successful! TX: {tx_hash_hex}")
+                    print(f"🤖 TVB: ✅ Buy successful! TX: {tx_hash_hex} | New balance: {post_trade_balance:.6f} AVAX")
+                
                 return True
             else:
+                error_msg = "Buy transaction failed in receipt"
+                if self.webhook:
+                    self.webhook.send_trade_failure("buy", token_info, error_msg)
+                
                 if self.logger:
-                    self.logger.error("Buy transaction failed in receipt")
+                    self.logger.error(error_msg)
                 else:
-                    print(f"🤖 TVB: ❌ Buy transaction failed in receipt")
+                    print(f"🤖 TVB: ❌ {error_msg}")
                 return False
                 
         except Exception as e:
+            error_msg = f"Buy execution error for {token_symbol}: {e}"
+            
+            if self.webhook:
+                self.webhook.send_trade_failure("buy", token_info, str(e))
+            
             if self.logger:
-                self.logger.error(f"Buy execution error for {token_symbol}: {e}")
+                self.logger.error(error_msg)
             else:
-                print(f"🤖 TVB: ❌ Buy execution error for {token_symbol}: {e}")
+                print(f"🤖 TVB: ❌ {error_msg}")
             return False
     
-    def _execute_sell(self, token, token_balance):
-        """Execute a sell transaction"""
-        token_address = token['address']
-        token_symbol = token['symbol']
+    def _execute_sell(self, token_info, token_balance, forced=False):
+        """Execute a sell transaction with webhook updates"""
+        token_address = token_info['address']
+        token_symbol = token_info['symbol']
         
         try:
             # Calculate sell percentage based on risk tolerance
-            # Lower risk tolerance = sell smaller amounts
             min_sell_perc = 0.1  # Always sell at least 10%
             max_sell_perc = max(min_sell_perc + 0.1, 1.0 - self.risk_tolerance)
             sell_percentage = random.uniform(min_sell_perc, max_sell_perc)
             
+            if forced:
+                sell_percentage = 1.0  # Sell everything if forced
+            
             amount_to_sell = int(token_balance * sell_percentage)
             
             if amount_to_sell <= 0:
-                if self.logger:
-                    self.logger.warning("Calculated sell amount is zero, skipping")
-                else:
-                    print(f"🤖 TVB: ⏭️ Calculated sell amount is zero, skipping")
+                error_msg = "Calculated sell amount is zero, skipping"
+                if self.webhook:
+                    self.webhook.send_error_update(error_msg, "zero_amount", token_info)
                 return False
             
             readable_amount = amount_to_sell / 1e18
+            
+            # Send sell attempt webhook
+            if self.webhook:
+                self.webhook.send_trade_attempt("sell", token_info, readable_amount)
+            
             if self.logger:
                 self.logger.trade("sell", f"{readable_amount:.4f} {token_symbol} ({sell_percentage*100:.1f}%)")
             else:
@@ -253,24 +289,76 @@ class TokenTrader:
             
             if receipt.status == 1:
                 tx_hash_hex = self.w3.to_hex(tx_hash)
+                post_trade_balance = self._get_avax_balance()
+                
+                # Send success webhook with post-trade balance
+                if self.webhook:
+                    self.webhook.send_sell_update(
+                        token_info, 
+                        amount_to_sell, 
+                        readable_amount, 
+                        sell_percentage, 
+                        tx_hash_hex, 
+                        post_trade_balance
+                    )
+                
                 if self.logger:
-                    self.logger.success(f"Sell successful! TX: {tx_hash_hex}")
+                    self.logger.success(f"Sell successful! TX: {tx_hash_hex} | New balance: {post_trade_balance:.6f} AVAX")
                 else:
-                    print(f"🤖 TVB: ✅ Sell successful! TX: {tx_hash_hex}")
+                    print(f"🤖 TVB: ✅ Sell successful! TX: {tx_hash_hex} | New balance: {post_trade_balance:.6f} AVAX")
+                
                 return True
             else:
+                error_msg = "Sell transaction failed in receipt"
+                if self.webhook:
+                    self.webhook.send_trade_failure("sell", token_info, error_msg)
+                
                 if self.logger:
-                    self.logger.error("Sell transaction failed in receipt")
+                    self.logger.error(error_msg)
                 else:
-                    print(f"🤖 TVB: ❌ Sell transaction failed in receipt")
+                    print(f"🤖 TVB: ❌ {error_msg}")
                 return False
                 
         except Exception as e:
+            error_msg = f"Sell execution error for {token_symbol}: {e}"
+            
+            if self.webhook:
+                self.webhook.send_trade_failure("sell", token_info, str(e))
+            
             if self.logger:
-                self.logger.error(f"Sell execution error for {token_symbol}: {e}")
+                self.logger.error(error_msg)
             else:
-                print(f"🤖 TVB: ❌ Sell execution error for {token_symbol}: {e}")
+                print(f"🤖 TVB: ❌ {error_msg}")
             return False
+    
+    def _decide_trade_action(self, token_balance):
+        """Decide whether to buy, sell, or hold based on personality and balance"""
+        has_tokens = token_balance > 0
+        
+        if has_tokens:
+            # If we have tokens, personality determines if we sell
+            # Higher buy_bias = less likely to sell
+            sell_probability = 1.0 - self.buy_bias
+            
+            # Add some randomness based on risk tolerance
+            sell_probability += (random.random() - 0.5) * (1.0 - self.risk_tolerance)
+            sell_probability = max(0.0, min(1.0, sell_probability))  # Clamp to [0,1]
+            
+            if random.random() < sell_probability:
+                return 'sell'
+        
+        # Default to buy (influenced by buy_bias)
+        # Higher buy_bias = more likely to buy
+        buy_probability = self.buy_bias
+        
+        # Add risk tolerance influence
+        buy_probability += (random.random() - 0.5) * self.risk_tolerance
+        buy_probability = max(0.0, min(1.0, buy_probability))  # Clamp to [0,1]
+        
+        if random.random() < buy_probability:
+            return 'buy'
+        
+        return 'hold'
     
     def _get_token_balance(self, token_address):
         """Get current balance of a specific token"""

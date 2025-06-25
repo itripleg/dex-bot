@@ -1,7 +1,7 @@
 {
   "name": "jackpot_jax",
   "displayName": "Jackpot Jax",
-  "bio": "The master of the sideways market. Jax is a methodical sniper, calmly waiting for price to reach key levels. She doesn't predict the market; she reacts to it with precision, trading the range one swing at a time.",
+  "bio": "Jax is a methodical sniper, calmly waiting for price to reach key levels. She doesn't predict the market; she reacts with precision, trading the range one swing at a time.",
   "avatarUrl": "/slayground-public/Jax.png",
   "privateKey": "SET_IN_ENV_LOCAL",
   "factoryAddress": "SET_IN_ENV_LOCAL",
