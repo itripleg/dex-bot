@@ -26,11 +26,11 @@ class WebhookManager:
         self.session_start_time = None
         
         # Define which actions should get personality phrases vs system messages
-        self.personality_actions = {'buy', 'sell', 'create_token', 'error'}
+        self.personality_actions = {'buy', 'sell', 'create_token', 'error', 'hold'}
         self.system_actions = {
             'cycle_start', 'cycle_complete', 'token_refresh', 'heartbeat', 'startup', 
             'shutdown', 'buy_attempt', 'sell_attempt', 'trade_failure', 'insufficient_funds',
-            'forced_sell', 'hold', 'balance_alert', 'token_refresh_start', 'token_refresh_complete',
+            'forced_sell', 'balance_alert', 'token_refresh_start', 'token_refresh_complete',
             'creation_cancelled', 'no_tokens', 'buy_success', 'sell_success', 'buy_failed', 'sell_failed'
         }
         
@@ -102,10 +102,28 @@ class WebhookManager:
                 phrase_list = self.phrases.get(action_type, [])
                 if phrase_list:
                     details['message'] = random.choice(phrase_list)
+                else:
+                    # Fallback messages for actions without configured phrases
+                    fallback_messages = {
+                        'hold': f"Staying put with this position for now.",
+                        'buy': "Making a purchase!",
+                        'sell': "Time to take some profits!",
+                        'create_token': "Creating something new!",
+                        'error': "Encountered a minor hiccup."
+                    }
+                    details['message'] = fallback_messages.get(action_type, f"Personality action: {action_type}")
             
             # For system actions, keep the provided message or use a default
             elif action_type in self.system_actions and 'message' not in details:
-                details['message'] = f"System: {action_type.replace('_', ' ').title()}"
+                system_messages = {
+                    'insufficient_funds': "Insufficient AVAX for trading operations",
+                    'forced_sell': "Forced to sell due to low AVAX balance",
+                    'balance_alert': "Balance threshold reached",
+                    'heartbeat': f"{self.display_name} is active and monitoring markets",
+                    'startup': f"{self.display_name} is initializing trading systems",
+                    'shutdown': f"{self.display_name} is going offline"
+                }
+                details['message'] = system_messages.get(action_type, f"System: {action_type.replace('_', ' ').title()}")
             
             # Add session financial metrics to all updates
             session_metrics = self._calculate_session_metrics()
@@ -197,6 +215,24 @@ class WebhookManager:
             "tradeType": "SELL"
         }, post_trade_balance)
     
+    def send_hold_update(self, token_info, token_balance=None, reason="personality_decision"):
+        """Send hold decision update - PERSONALITY MESSAGE"""
+        details = {
+            "tokenAddress": token_info["address"],
+            "tokenSymbol": token_info["symbol"],
+            "tokenName": token_info["name"],
+            "reason": reason,
+            "action": "HOLD"
+        }
+        
+        if token_balance is not None:
+            details.update({
+                "tokenBalance": str(token_balance),
+                "readableBalance": round(token_balance / 1e18, 6) if token_balance > 0 else 0
+            })
+        
+        return self.send_update("hold", details)
+    
     def send_trade_attempt(self, action, token_info, planned_amount=None):
         """Send notification when trade is being attempted (before execution) - SYSTEM MESSAGE"""
         details = {
@@ -230,6 +266,27 @@ class WebhookManager:
             })
         
         return self.send_update("error", details)
+    
+    def send_insufficient_funds_update(self, available_avax, required_avax, token_info=None):
+        """Send insufficient funds notification - SYSTEM MESSAGE"""
+        details = {
+            "availableAvax": round(available_avax, 6),
+            "requiredAvax": round(required_avax, 6),
+            "deficit": round(required_avax - available_avax, 6),
+            "status": "insufficient_funds"
+        }
+        
+        if token_info:
+            details.update({
+                "tokenAddress": token_info["address"],
+                "tokenSymbol": token_info["symbol"],
+                "tokenName": token_info["name"]
+            })
+            details["message"] = f"Insufficient AVAX to trade {token_info['symbol']} (need {required_avax:.4f}, have {available_avax:.4f})"
+        else:
+            details["message"] = f"Insufficient AVAX for trading (need {required_avax:.4f}, have {available_avax:.4f})"
+        
+        return self.send_update("insufficient_funds", details)
     
     def send_heartbeat(self, balance_info, token_count, extra_data=None):
         """Send heartbeat update with comprehensive session metrics"""
@@ -359,8 +416,6 @@ class WebhookManager:
         print(f"  📈 P&L Amount: {summary['pnlAmount']:+.6f} AVAX")
         print(f"  📈 P&L Percentage: {summary['pnlPercentage']:+.2f}%")
         print(f"  ⏰ Session Duration: {summary['sessionDurationMinutes']} minutes")
-    
-    # ... rest of the methods remain the same (test_webhook, get_stats, print_stats, etc.)
     
     def test_webhook(self):
         """Test webhook connectivity"""

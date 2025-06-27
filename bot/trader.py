@@ -68,6 +68,18 @@ class TokenTrader:
                 else:
                     if self.logger:
                         self.logger.warning(f"Insufficient AVAX ({current_avax:.4f}) and no {token_symbol} to sell")
+                    
+                    # Send webhook for insufficient funds
+                    if self.webhook:
+                        self.webhook.send_update("insufficient_funds", {
+                            "message": f"Insufficient AVAX ({current_avax:.4f}) for trading",
+                            "tokenAddress": token_address,
+                            "tokenSymbol": token_symbol,
+                            "tokenName": token_name,
+                            "availableAvax": round(current_avax, 6),
+                            "minimumRequired": min_trade
+                        })
+                    
                     return False
             
             # Make trading decision based on personality and holdings
@@ -82,8 +94,22 @@ class TokenTrader:
             elif action == 'sell':
                 return self._execute_sell(token_info, token_balance)
             else:
+                # Handle 'hold' decision with webhook
                 if self.verbose and self.logger:
-                    self.logger.info(f"⏭️ No action taken for {token_symbol}")
+                    self.logger.info(f"⏭️ Holding position for {token_symbol}")
+                
+                # Send webhook for hold decision
+                if self.webhook:
+                    self.webhook.send_update("hold", {
+                        "message": f"Holding position in {token_symbol}",
+                        "tokenAddress": token_address,
+                        "tokenSymbol": token_symbol,
+                        "tokenName": token_name,
+                        "tokenBalance": str(token_balance),
+                        "readableBalance": round(token_balance / 1e18, 6),
+                        "reason": "personality_decision"
+                    })
+                
                 return True
                 
         except Exception as e:
