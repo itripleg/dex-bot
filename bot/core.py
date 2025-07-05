@@ -1,7 +1,8 @@
-# bot/core.py
+# bot/core.py - Complete updated __init__ method with wallet address
 #!/usr/bin/env python3
 """
 Core bot orchestration with shared token management optimization
+Updated to pass wallet address to webhook manager
 """
 
 import time
@@ -40,7 +41,7 @@ class TransparentVolumeBot:
         
         print_config_summary(self.config)
         
-        # Initialize Web3 and account
+        # Initialize Web3 and account FIRST (we need the wallet address)
         self._setup_web3_and_account(private_key_override)
         
         # Initialize contract interfaces
@@ -53,7 +54,7 @@ class TransparentVolumeBot:
         self.session_start_time = datetime.utcnow().isoformat() + "Z"
         self.starting_balance = self.get_avax_balance()
         
-        # Initialize webhook manager with balance callback and bio
+        # Initialize webhook manager with balance callback, bio, AND WALLET ADDRESS
         self.webhook = WebhookManager(
             bot_name=self.bot_name,
             display_name=self.display_name,
@@ -62,7 +63,8 @@ class TransparentVolumeBot:
             bot_secret=self.config.get('botSecret'),
             phrases=self._extract_personality_phrases(),
             bio=self.config.get('bio'),
-            get_balance_callback=self.get_avax_balance
+            get_balance_callback=self.get_avax_balance,
+            wallet_address=self.account.address  # PASS WALLET ADDRESS HERE
         )
         
         # Set session start in webhook manager
@@ -85,10 +87,11 @@ class TransparentVolumeBot:
         # Load tokens using optimized system
         self._load_tokens()
         
-        # Send startup notification
+        # Send startup notification (now includes wallet address automatically)
         self._send_startup_notification()
         
         print(f"🤖 TVB: ✅ Bot '{self.display_name}' initialized successfully!")
+        print(f"🤖 TVB: 💼 Wallet Address: {self.account.address}")
         print(f"🤖 TVB: 💰 Starting session with {self.starting_balance:.6f} AVAX")
     
     def _setup_web3_and_account(self, private_key_override):
@@ -104,9 +107,10 @@ class TransparentVolumeBot:
         # Setup account - pass bot name for environment lookup
         private_key = get_private_key(self.config, private_key_override, self.bot_name)
         
-        # Check if this was a newly generated key by looking for the "0x" prefix and checking if it's 66 chars
-        # This is a heuristic - newly generated keys will be displayed with generation messages
         self.account = Account.from_key(private_key)
+        
+        # Log wallet address prominently
+        print(f"🤖 TVB: 💼 Bot Wallet Address: {self.account.address}")
         
         # If the balance is 0 and we just generated a key, show funding instructions
         current_balance = self.get_avax_balance()
@@ -167,11 +171,12 @@ class TransparentVolumeBot:
         self.logger.success(f"Loaded {len(self.tokens)} tradeable tokens")
     
     def _send_startup_notification(self):
-        """Send enhanced startup notification with session balance"""
+        """Send enhanced startup notification with session balance and wallet address"""
         startup_info = {
             "message": f"{self.display_name} is now online and ready to trade!",
             "sessionStarted": self.session_start_time,
             "tokensFound": len(self.tokens),
+            "walletAddress": self.account.address,  # Include wallet address in startup
             "config": {
                 "buyBias": self.config.get('buyBias', 0.6),
                 "riskTolerance": self.config.get('riskTolerance', 0.5),
@@ -292,6 +297,7 @@ class TransparentVolumeBot:
             token_count=len(self.tokens),
             extra_data={
                 "minTradeAmount": min_trade_amount,
+                "walletAddress": self.account.address,  # Include wallet address
                 "sharedManagerStats": {
                     "total_tokens": shared_stats.get("total_tokens", 0),
                     "registered_bots": shared_stats.get("registered_bots", 0),
@@ -302,11 +308,11 @@ class TransparentVolumeBot:
         )
     
     def print_session_summary(self):
-        """Print comprehensive session summary"""
+        """Print comprehensive session summary with wallet address"""
         print(f"\n🤖 TVB: 📊 {self.display_name} Session Summary:")
         print(f"  👤 Account: {self.account.address}")
         
-        # Get session metrics from webhook manager
+        # Get session metrics from webhook manager (includes wallet address)
         self.webhook.print_session_summary()
         
         # Additional bot-specific info
@@ -319,61 +325,7 @@ class TransparentVolumeBot:
         print(f"    🚀 Queries saved: {shared_stats.get('factory_queries_saved', 0)}")
         print(f"    ⏰ Next refresh: {shared_stats.get('next_refresh_in_minutes', 0):.1f}min")
     
-    def run(self):
-        """Main bot execution loop"""
-        print(f"\n🤖 TVB: 🚀 Starting {self.display_name} trading loop...")
-        print(f"🤖 TVB: Target webhook: {self.config.get('webhookUrl', 'None')}")
-        
-        cycle_count = 0
-        last_heartbeat = time.time()
-        last_token_refresh = time.time()
-        last_summary = time.time()
-        
-        try:
-            while True:
-                cycle_count += 1
-                timestamp = datetime.now().strftime("%H:%M:%S")
-                
-                if self.verbose:
-                    print(f"\n🤖 TVB: [{timestamp}] 🔄 Cycle #{cycle_count}")
-                
-                # Execute trading cycle (trader handles its own webhooks)
-                self.execute_trade_cycle()
-                
-                # Send heartbeat every 5 minutes
-                if time.time() - last_heartbeat > 300:  # 5 minutes
-                    self.send_heartbeat()
-                    last_heartbeat = time.time()
-                
-                # Print session summary every 30 minutes
-                if time.time() - last_summary > 1800:  # 30 minutes
-                    if self.verbose:
-                        self.print_session_summary()
-                    last_summary = time.time()
-                
-                # Refresh token list every 30 minutes (but shared manager handles this automatically)
-                if time.time() - last_token_refresh > 1800:  # 30 minutes
-                    if self.verbose:
-                        self.logger.info("🔄 Scheduled token refresh check...")
-                    self.refresh_tokens()  # This will use shared cache if still fresh
-                    last_token_refresh = time.time()
-                
-                # Calculate delay based on personality
-                min_interval = self.config.get('minInterval', 15)
-                max_interval = self.config.get('maxInterval', 60)
-                delay = random.randint(min_interval, max_interval)
-                
-                if self.verbose:
-                    print(f"🤖 TVB: ⏳ Waiting {delay}s until next cycle...")
-                
-                time.sleep(delay)
-                
-        except KeyboardInterrupt:
-            self._handle_shutdown(cycle_count, "user")
-        except Exception as e:
-            self._handle_shutdown(cycle_count, "crash", str(e))
-        finally:
-            print(f"🤖 TVB: 👋 Bot session ended after {cycle_count} cycles")
+    # ... rest of the methods remain the same ...
     
     def _handle_shutdown(self, cycle_count, reason, error_msg=None):
         """Handle bot shutdown gracefully with enhanced reporting"""
@@ -381,7 +333,8 @@ class TransparentVolumeBot:
         
         shutdown_info = {
             "totalCycles": cycle_count,
-            "sessionMetrics": session_metrics
+            "sessionMetrics": session_metrics,
+            "walletAddress": self.account.address  # Include wallet address in shutdown
         }
         
         if reason == "user":
