@@ -25,15 +25,19 @@ class FactoryContract:
                     {"internalType": "string", "name": "name", "type": "string"},
                     {"internalType": "string", "name": "symbol", "type": "string"},
                     {"internalType": "string", "name": "imageUrl", "type": "string"},
-                    {"internalType": "address", "name": "burnManager", "type": "address"}
+                    {"internalType": "address", "name": "burnManager", "type": "address"},
+                    {"internalType": "uint256", "name": "minTokensOut", "type": "uint256"}
                 ],
                 "name": "createToken",
                 "outputs": [{"internalType": "address", "name": "", "type": "address"}],
-                "stateMutability": "nonpayable",
+                "stateMutability": "payable",
                 "type": "function"
             },
             {
-                "inputs": [{"internalType": "address", "name": "token", "type": "address"}],
+                "inputs": [
+                    {"internalType": "address", "name": "tokenAddress", "type": "address"},
+                    {"internalType": "uint256", "name": "minTokensOut", "type": "uint256"}
+                ],
                 "name": "buy",
                 "outputs": [],
                 "stateMutability": "payable",

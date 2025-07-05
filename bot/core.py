@@ -257,27 +257,20 @@ class TransparentVolumeBot:
         
         if success and self.verbose:
             self.logger.success(f"Trade cycle completed for {token['symbol']}")
-    
+        
     def _attempt_token_creation(self):
-        """Attempt to create a new token with personality-driven webhook"""
+        """Attempt to create a new token with personality-driven concept"""
         self.logger.info("🎨 Considering token creation...")
         
-        current_balance = self.get_avax_balance()
-        min_creation_balance = 0.1  # Require at least 0.1 AVAX for token creation
+        # Use trader's token creation functionality
+        success = self.trader.attempt_token_creation()
         
-        if current_balance < min_creation_balance:
-            if self.verbose:
-                self.logger.warning(f"Insufficient AVAX for token creation ({current_balance:.4f} < {min_creation_balance})")
-            return
+        if success:
+            # Refresh token list to include the new token
+            self.logger.info("🔄 Refreshing token list to include new creation...")
+            self.refresh_tokens()
         
-        # Send personality-driven token creation message
-        self.webhook.send_update("create_token", {
-            "status": "planned"
-        })
-        
-        # TODO: Implement actual token creation logic
-        if self.verbose:
-            self.logger.info("💡 Token creation logic not yet implemented")
+        return success
     
     def send_heartbeat(self):
         """Send periodic heartbeat update with session metrics"""

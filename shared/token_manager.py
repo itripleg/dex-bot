@@ -63,13 +63,15 @@ class SharedTokenManager:
         self.factory_contract = None
         self.token_abi = None
         self.w3 = None
+        self.current_factory_address = None  # Track factory address changes
         
         # Statistics
         self.stats = {
             "total_refreshes": 0,
             "bots_served": 0,
             "cache_hits": 0,
-            "factory_queries_saved": 0
+            "factory_queries_saved": 0,
+            "factory_address_changes": 0
         }
         
         # Bot registration
@@ -83,6 +85,27 @@ class SharedTokenManager:
     def register_bot(self, bot_name: str, factory_contract, token_abi, w3, logger=None):
         """Register a bot with the shared manager"""
         with self.data_lock:
+            # Check if factory address changed
+            new_factory_address = factory_contract.address
+            
+            if self.current_factory_address is None:
+                self.current_factory_address = new_factory_address
+                print(f"🤖 TVB: 📜 Factory address set: {new_factory_address}")
+            elif self.current_factory_address != new_factory_address:
+                print(f"🤖 TVB: 🔄 FACTORY ADDRESS CHANGED!")
+                print(f"🤖 TVB: Old: {self.current_factory_address}")
+                print(f"🤖 TVB: New: {new_factory_address}")
+                print(f"🤖 TVB: 🧹 Clearing all cached tokens...")
+                
+                # Clear all cached data
+                self.tokens.clear()
+                self.tradeable_tokens.clear()
+                self.last_refresh = None
+                self.current_factory_address = new_factory_address
+                
+                # Update stats
+                self.stats["factory_address_changes"] += 1
+            
             self.registered_bots[bot_name] = {
                 "registered_at": datetime.utcnow().isoformat() + "Z",
                 "logger": logger
@@ -252,6 +275,7 @@ class SharedTokenManager:
         print(f"  🔄 Total refreshes: {stats['total_refreshes']}")
         print(f"  💨 Cache hits: {stats['cache_hits']}")
         print(f"  🚀 Factory queries saved: {stats['factory_queries_saved']}")
+        print(f"  🔄 Factory address changes: {stats['factory_address_changes']}")
         print(f"  ⏰ Next refresh in: {stats['next_refresh_in_minutes']:.1f} minutes")
         
         if stats['last_refresh']:
