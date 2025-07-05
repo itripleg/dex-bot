@@ -1,7 +1,8 @@
+# launch_all.py
 #!/usr/bin/env python3
 """
-Multi-Bot Launcher for TVB
-Simple threaded launcher to run multiple bots simultaneously
+OPTIMIZED Multi-Bot Launcher for TVB
+Uses shared token management to eliminate redundant factory queries
 """
 
 import threading
@@ -17,15 +18,21 @@ sys.path.insert(0, str(project_root))
 
 from bot.core import TransparentVolumeBot
 from bot.config import load_bot_config, validate_config, merge_config_with_environment
+from shared.token_manager import SharedTokenManager
 
-class BotManager:
-    """Manages multiple bot instances"""
+class OptimizedBotManager:
+    """Manages multiple bot instances with shared token optimization"""
     
     def __init__(self, verbose=False):
         self.verbose = verbose
         self.bots = {}
         self.threads = {}
         self.running = False
+        
+        # Get shared token manager instance
+        self.shared_manager = SharedTokenManager()
+        
+        print("🤖 TVB: 🚀 Optimized Bot Manager initialized with shared token system")
         
     def discover_bot_configs(self, config_dir="configs"):
         """Auto-discover bot configuration files"""
@@ -103,27 +110,40 @@ class BotManager:
             print(f"🤖 TVB: 👋 {bot_name} thread ended")
     
     def start_all_bots(self, config_files, force_cache_refresh=False, use_local=False, network_override=None, private_key_override=None):
-        """Start all bots in separate threads"""
-        print(f"\n🤖 TVB: 🚀 Starting multi-bot launcher...")
+        """Start all bots in separate threads with optimization reporting"""
+        print(f"\n🤖 TVB: 🚀 Starting OPTIMIZED multi-bot launcher...")
+        print("🤖 TVB: 💡 Using shared token manager to eliminate redundant factory queries!")
         
         if use_local:
             print("🤖 TVB: 🏠 Local development mode enabled - using localhost:3000 webhook")
         
         # Initialize all bots first
         successful_bots = []
-        for config_path in config_files:
+        start_time = time.time()
+        
+        for i, config_path in enumerate(config_files, 1):
+            print(f"\n🤖 TVB: [{i}/{len(config_files)}] Initializing bot...")
             bot_name, bot = self.create_bot(config_path, force_cache_refresh, use_local, network_override, private_key_override)
             if bot:
                 successful_bots.append(bot_name)
+        
+        init_time = time.time() - start_time
         
         if not successful_bots:
             print("🤖 TVB: ❌ No bots were successfully initialized!")
             return
         
-        print(f"\n🤖 TVB: 🎯 Starting {len(successful_bots)} bots:")
+        print(f"\n🤖 TVB: ✅ All bots initialized in {init_time:.2f}s")
+        print(f"🤖 TVB: 🎯 Starting {len(successful_bots)} bots:")
         for bot_name in successful_bots:
             bot = self.bots[bot_name]
             print(f"  - {bot.display_name} ({bot_name})")
+        
+        # Show optimization benefits
+        print(f"\n🤖 TVB: 📊 OPTIMIZATION BENEFITS:")
+        print(f"  🔄 Without optimization: {len(successful_bots)} separate factory queries")
+        print(f"  🚀 With shared manager: 1 factory query shared across all bots")
+        print(f"  💰 Efficiency gain: {((len(successful_bots) - 1) / len(successful_bots) * 100):.1f}% reduction in factory calls")
         
         # Start all bots in threads
         self.running = True
@@ -136,10 +156,14 @@ class BotManager:
             )
             self.threads[bot_name] = thread
             thread.start()
-            time.sleep(1)  # Stagger starts slightly
+            time.sleep(0.5)  # Stagger starts slightly
         
-        print(f"\n🤖 TVB: ✅ All {len(successful_bots)} bots are now running!")
+        print(f"\n🤖 TVB: ✅ All {len(successful_bots)} bots are now running with shared optimization!")
         print("🤖 TVB: Press Ctrl+C to stop all bots")
+        
+        # Show shared manager stats after 10 seconds
+        time.sleep(10)
+        self._show_optimization_stats()
         
         # Wait for threads or user interrupt
         try:
@@ -148,10 +172,23 @@ class BotManager:
             print(f"\n🤖 TVB: 🛑 Shutdown signal received...")
             self.stop_all_bots()
     
+    def _show_optimization_stats(self):
+        """Show current optimization statistics"""
+        print(f"\n🤖 TVB: 📊 Current Optimization Stats:")
+        self.shared_manager.print_stats()
+    
     def monitor_bots(self):
         """Monitor running bots and keep main thread alive"""
+        stats_interval = 300  # Show stats every 5 minutes
+        last_stats = time.time()
+        
         while self.running:
             time.sleep(5)
+            
+            # Show optimization stats periodically
+            if time.time() - last_stats > stats_interval:
+                self._show_optimization_stats()
+                last_stats = time.time()
             
             # Check if any threads have died
             active_bots = []
@@ -173,7 +210,7 @@ class BotManager:
                 break
     
     def stop_all_bots(self):
-        """Stop all running bots"""
+        """Stop all running bots and cleanup shared resources"""
         self.running = False
         
         print("🤖 TVB: 🛑 Stopping all bots...")
@@ -187,17 +224,26 @@ class BotManager:
                 if thread.is_alive():
                     print(f"🤖 TVB: ⚠️  {bot_name} did not stop gracefully")
         
-        print("🤖 TVB: 👋 All bots stopped")
+        # Show final optimization stats
+        print(f"\n🤖 TVB: 📊 Final Optimization Report:")
+        self.shared_manager.print_stats()
+        
+        # Cleanup shared manager
+        self.shared_manager.cleanup()
+        
+        print("🤖 TVB: 👋 All bots stopped and resources cleaned up")
     
     def dry_run_all(self, config_files, force_cache_refresh=False, use_local=False, network_override=None, private_key_override=None):
         """Test all bot configurations without starting them"""
-        print(f"\n🤖 TVB: 🧪 Dry run for all bot configurations...")
+        print(f"\n🤖 TVB: 🧪 OPTIMIZED dry run for all bot configurations...")
+        print("🤖 TVB: 💡 Testing with shared token manager optimization")
         
         if use_local:
             print("🤖 TVB: 🏠 Local development mode enabled for dry run")
         
         successful = 0
         failed = 0
+        start_time = time.time()
         
         for config_path in config_files:
             try:
@@ -229,42 +275,61 @@ class BotManager:
                 
                 successful += 1
                 
+                # Cleanup bot resources
+                bot.token_loader.cleanup()
+                
             except Exception as e:
                 print(f"🤖 TVB: ❌ {config_path} failed: {e}")
                 failed += 1
         
+        total_time = time.time() - start_time
+        
         print(f"\n🤖 TVB: 📊 Dry run complete:")
         print(f"  ✅ Successful: {successful}")
         print(f"  ❌ Failed: {failed}")
+        print(f"  ⏱️  Total time: {total_time:.2f}s")
+        
+        # Show optimization benefits
+        if successful > 1:
+            print(f"\n🤖 TVB: 💡 Optimization Benefits Demonstrated:")
+            self.shared_manager.print_stats()
+        
+        # Cleanup
+        self.shared_manager.cleanup()
         
         return successful > 0
 
 
 def main():
-    """Main entry point for multi-bot launcher"""
+    """Main entry point for optimized multi-bot launcher"""
     parser = argparse.ArgumentParser(
-        description='TVB Multi-Bot Launcher - Run multiple trading bots simultaneously',
+        description='TVB OPTIMIZED Multi-Bot Launcher - Eliminates redundant factory queries!',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
+OPTIMIZATION FEATURES:
+• Shared token management across all bots
+• Single factory query instead of N queries
+• Real-time efficiency statistics
+• Automatic cache management
+
 Examples:
-  python launch_all.py --auto                    # Start all bots in configs/
-  python launch_all.py --dry-run --network <RPC_URL> # Test all configs on a specific network
-  python launch_all.py --auto --private-key <KEY>    # Run all bots with the same wallet
+  python launch_all.py --auto                    # Start all bots with optimization
+  python launch_all.py --dry-run --network <RPC_URL> # Test all configs with shared manager
+  python launch_all.py --auto --private-key <KEY>    # Run all bots with same wallet (optimized)
   python launch_all.py --configs bullish_billy.json jackpot_jax.json --auto
-  python launch_all.py --config-dir my_bots/ --auto
         """
     )
     
     parser.add_argument(
         '--auto',
         action='store_true',
-        help='Start all bots automatically'
+        help='Start all bots automatically with optimization'
     )
     
     parser.add_argument(
         '--dry-run',
         action='store_true',
-        help='Test all configurations without starting bots'
+        help='Test all configurations without starting bots (shows optimization benefits)'
     )
     
     parser.add_argument(
@@ -294,7 +359,7 @@ Examples:
     parser.add_argument(
         '--refresh-cache',
         action='store_true',
-        help='Force refresh token cache for all bots'
+        help='Force refresh shared token cache for all bots'
     )
 
     parser.add_argument(
@@ -311,8 +376,8 @@ Examples:
 
     args = parser.parse_args()
     
-    # Initialize bot manager
-    manager = BotManager(verbose=args.verbose)
+    # Initialize OPTIMIZED bot manager
+    manager = OptimizedBotManager(verbose=args.verbose)
     
     # Determine which configs to use
     if args.configs:
@@ -339,12 +404,13 @@ Examples:
     elif args.auto:
         manager.start_all_bots(config_files, args.refresh_cache, args.local, args.network, args.private_key)
     else:
-        print("🤖 TVB: ✅ Multi-bot launcher ready!")
+        print("🤖 TVB: ✅ OPTIMIZED multi-bot launcher ready!")
         print(f"🤖 TVB: Found {len(config_files)} bot configurations")
+        print("🤖 TVB: 💡 Uses shared token manager to eliminate redundant factory queries")
         if args.local:
-            print("🤖 TVB: 🏠 Add --auto to start all bots in local development mode")
+            print("🤖 TVB: 🏠 Add --auto to start all bots in local development mode (optimized)")
         else:
-            print("🤖 TVB: Add --auto to start all bots, or --dry-run to test")
+            print("🤖 TVB: Add --auto to start all bots with optimization, or --dry-run to test")
 
 
 if __name__ == "__main__":

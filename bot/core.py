@@ -1,6 +1,7 @@
+# bot/core.py
 #!/usr/bin/env python3
 """
-Core bot orchestration with enhanced session balance tracking
+Core bot orchestration with shared token management optimization
 """
 
 import time
@@ -10,16 +11,17 @@ from web3 import Web3
 from eth_account import Account
 
 from bot.config import get_private_key, merge_config_with_defaults, print_config_summary
-from bot.cache import TokenCache, TokenLoader
+from bot.cache import TokenCache  # Keep for backwards compatibility if needed
 from bot.trader import TokenTrader
 from bot.webhook import WebhookManager
 from bot.logger import BotLogger
 from contracts.factory import FactoryContract
 from contracts.token import TokenContract
+from shared.token_manager import OptimizedTokenLoader
 
 class TransparentVolumeBot:
     """
-    Main bot orchestration class with enhanced session balance tracking
+    Main bot orchestration class with optimized shared token management
     """
     
     def __init__(self, config, private_key_override=None, force_cache_refresh=False, verbose=False):
@@ -44,8 +46,8 @@ class TransparentVolumeBot:
         # Initialize contract interfaces
         self._setup_contracts()
         
-        # Initialize cache system
-        self._setup_cache(force_cache_refresh)
+        # Initialize OPTIMIZED token loading system
+        self._setup_optimized_token_loader(force_cache_refresh)
         
         # Session tracking
         self.session_start_time = datetime.utcnow().isoformat() + "Z"
@@ -80,7 +82,7 @@ class TransparentVolumeBot:
         # Bot state
         self.tokens = []
         
-        # Load tokens
+        # Load tokens using optimized system
         self._load_tokens()
         
         # Send startup notification
@@ -90,7 +92,7 @@ class TransparentVolumeBot:
         print(f"🤖 TVB: 💰 Starting session with {self.starting_balance:.6f} AVAX")
     
     def _setup_web3_and_account(self, private_key_override):
-        """Initialize Web3 connection and account"""
+        """Initialize Web3 connection and account with auto key generation support"""
         self.logger.info("🌐 Setting up Web3 connection...")
         
         self.rpc_url = self.config['rpcUrl']
@@ -101,9 +103,25 @@ class TransparentVolumeBot:
         
         # Setup account - pass bot name for environment lookup
         private_key = get_private_key(self.config, private_key_override, self.bot_name)
+        
+        # Check if this was a newly generated key by looking for the "0x" prefix and checking if it's 66 chars
+        # This is a heuristic - newly generated keys will be displayed with generation messages
         self.account = Account.from_key(private_key)
         
+        # If the balance is 0 and we just generated a key, show funding instructions
+        current_balance = self.get_avax_balance()
+        if current_balance == 0:
+            print("\n🤖 TVB: ⚠️  WALLET NEEDS FUNDING!")
+            print("🤖 TVB: " + "="*60)
+            print(f"🤖 TVB: 📍 Send AVAX to: {self.account.address}")
+            print("🤖 TVB: 🏦 Recommended minimum: 0.1 AVAX for testing")
+            print("🤖 TVB: 🌐 Avalanche Fuji Testnet Faucet:")
+            print("🤖 TVB:    https://faucet.avax.network/")
+            print("🤖 TVB: " + "="*60)
+            print("🤖 TVB: ⏳ The bot will continue but cannot trade without AVAX\n")
+        
         self.logger.success(f"Account: {self.account.address}")
+        self.logger.info(f"Balance: {current_balance:.6f} AVAX")
     
     def _setup_contracts(self):
         """Initialize contract interfaces"""
@@ -116,24 +134,22 @@ class TransparentVolumeBot:
         
         self.token_contract = TokenContract(w3=self.w3)
     
-    def _setup_cache(self, force_refresh):
-        """Initialize token cache system"""
-        self.logger.info("💾 Setting up token cache...")
+    def _setup_optimized_token_loader(self, force_refresh):
+        """Initialize OPTIMIZED token loading system using shared manager"""
+        self.logger.info("🚀 Setting up optimized token loading (shared manager)...")
         
-        cache_duration = self.config.get('cacheDurationHours', 6)
-        self.cache = TokenCache(self.bot_name, cache_duration)
-        
-        if force_refresh:
-            self.cache.force_refresh()
-            self.logger.info("🔄 Forced cache refresh requested")
-        
-        self.token_loader = TokenLoader(
+        # Use optimized loader instead of old cache system
+        self.token_loader = OptimizedTokenLoader(
+            bot_name=self.bot_name,
             factory_contract=self.factory_contract.contract,
             token_abi=self.token_contract.abi,
             w3=self.w3,
-            cache=self.cache,
             logger=self.logger
         )
+        
+        if force_refresh:
+            self.logger.info("🔄 Forced refresh requested")
+            self.token_loader.force_refresh()
     
     def _extract_personality_phrases(self):
         """Extract personality phrases from config"""
@@ -145,10 +161,10 @@ class TransparentVolumeBot:
         }
     
     def _load_tokens(self):
-        """Load tradeable tokens using cache system"""
-        print("🤖 TVB: 🔍 Loading tradeable tokens...")
+        """Load tradeable tokens using OPTIMIZED shared system"""
+        self.logger.info("🔍 Loading tradeable tokens via shared manager...")
         self.tokens = self.token_loader.load_tokens_optimized()
-        print(f"🤖 TVB: ✅ Loaded {len(self.tokens)} tradeable tokens")
+        self.logger.success(f"Loaded {len(self.tokens)} tradeable tokens")
     
     def _send_startup_notification(self):
         """Send enhanced startup notification with session balance"""
@@ -198,20 +214,19 @@ class TransparentVolumeBot:
         return self.webhook.get_session_summary()
     
     def refresh_tokens(self):
-        """Refresh token list (public method for external calls)"""
-        print("🤖 TVB: 🔄 Refreshing token list...")
+        """Refresh token list using optimized shared system"""
+        self.logger.info("🔄 Refreshing token list via shared manager...")
         self.tokens = self.token_loader.load_tokens_optimized()
-        print(f"🤖 TVB: ✅ Refreshed: {len(self.tokens)} tradeable tokens")
+        self.logger.success(f"Refreshed: {len(self.tokens)} tradeable tokens")
     
     def force_cache_refresh(self):
-        """Force a complete cache refresh"""
-        self.cache.force_refresh()
+        """Force a complete refresh via shared manager"""
+        self.token_loader.force_refresh()
         self.refresh_tokens()
-        self.cache.save()
     
     def get_cache_stats(self):
-        """Get cache performance statistics"""
-        return self.cache.get_stats()
+        """Get shared manager statistics"""
+        return self.token_loader.get_stats()
     
     def execute_trade_cycle(self):
         """Execute one complete trading cycle with minimal webhook noise"""
@@ -226,33 +241,33 @@ class TransparentVolumeBot:
         
         # Check if we have tokens to trade
         if not self.tokens:
-            print("🤖 TVB: ⏭️ No tradeable tokens, refreshing list...")
+            self.logger.warning("⏭️ No tradeable tokens, refreshing list...")
             self.refresh_tokens()
             if not self.tokens:
-                print("🤖 TVB: ⏭️ Still no tokens found, waiting...")
+                self.logger.warning("⏭️ Still no tokens found, waiting...")
                 return
         
         # Select random token and execute trade
         token = random.choice(self.tokens)
         
         if self.verbose:
-            print(f"🤖 TVB: 🎯 Selected token: {token['symbol']} ({token['address'][:10]}...)")
+            self.logger.info(f"🎯 Selected token: {token['symbol']} ({token['address'][:10]}...)")
         
         success = self.trader.execute_trade_decision(token)
         
         if success and self.verbose:
-            print(f"🤖 TVB: ✅ Trade cycle completed for {token['symbol']}")
+            self.logger.success(f"Trade cycle completed for {token['symbol']}")
     
     def _attempt_token_creation(self):
         """Attempt to create a new token with personality-driven webhook"""
-        print("🤖 TVB: 🎨 Considering token creation...")
+        self.logger.info("🎨 Considering token creation...")
         
         current_balance = self.get_avax_balance()
         min_creation_balance = 0.1  # Require at least 0.1 AVAX for token creation
         
         if current_balance < min_creation_balance:
             if self.verbose:
-                print(f"🤖 TVB: ⚠️ Insufficient AVAX for token creation ({current_balance:.4f} < {min_creation_balance})")
+                self.logger.warning(f"Insufficient AVAX for token creation ({current_balance:.4f} < {min_creation_balance})")
             return
         
         # Send personality-driven token creation message
@@ -262,11 +277,11 @@ class TransparentVolumeBot:
         
         # TODO: Implement actual token creation logic
         if self.verbose:
-            print("🤖 TVB: 💡 Token creation logic not yet implemented")
+            self.logger.info("💡 Token creation logic not yet implemented")
     
     def send_heartbeat(self):
         """Send periodic heartbeat update with session metrics"""
-        cache_stats = self.get_cache_stats()
+        shared_stats = self.get_cache_stats()
         
         # Check for low balance alert (but don't spam)
         current_balance = self.get_avax_balance()
@@ -284,9 +299,11 @@ class TransparentVolumeBot:
             token_count=len(self.tokens),
             extra_data={
                 "minTradeAmount": min_trade_amount,
-                "cacheStats": {
-                    "cached_tokens": cache_stats["cached_tokens"],
-                    "hit_rate": f"{cache_stats.get('cache_hits', 0) / max(1, cache_stats.get('cache_hits', 0) + cache_stats.get('cache_misses', 0)) * 100:.1f}%"
+                "sharedManagerStats": {
+                    "total_tokens": shared_stats.get("total_tokens", 0),
+                    "registered_bots": shared_stats.get("registered_bots", 0),
+                    "factory_queries_saved": shared_stats.get("factory_queries_saved", 0),
+                    "next_refresh_minutes": shared_stats.get("next_refresh_in_minutes", 0)
                 }
             }
         )
@@ -301,8 +318,13 @@ class TransparentVolumeBot:
         
         # Additional bot-specific info
         print(f"  🎯 Tokens Tracked: {len(self.tokens)}")
-        cache_stats = self.get_cache_stats()
-        print(f"  💾 Cache Hit Rate: {cache_stats.get('cache_hits', 0) / max(1, cache_stats.get('cache_hits', 0) + cache_stats.get('cache_misses', 0)) * 100:.1f}%")
+        
+        # Show shared manager stats
+        shared_stats = self.get_cache_stats()
+        print(f"  🌐 Shared Manager:")
+        print(f"    🤖 Total bots: {shared_stats.get('registered_bots', 0)}")
+        print(f"    🚀 Queries saved: {shared_stats.get('factory_queries_saved', 0)}")
+        print(f"    ⏰ Next refresh: {shared_stats.get('next_refresh_in_minutes', 0):.1f}min")
     
     def run(self):
         """Main bot execution loop"""
@@ -336,11 +358,11 @@ class TransparentVolumeBot:
                         self.print_session_summary()
                     last_summary = time.time()
                 
-                # Refresh token list every 30 minutes (silently)
+                # Refresh token list every 30 minutes (but shared manager handles this automatically)
                 if time.time() - last_token_refresh > 1800:  # 30 minutes
                     if self.verbose:
-                        print("🤖 TVB: 🔄 Scheduled token refresh...")
-                    self.refresh_tokens()
+                        self.logger.info("🔄 Scheduled token refresh check...")
+                    self.refresh_tokens()  # This will use shared cache if still fresh
                     last_token_refresh = time.time()
                 
                 # Calculate delay based on personality
@@ -385,18 +407,23 @@ class TransparentVolumeBot:
         
         self.webhook.send_shutdown_notification(shutdown_info)
         
-        # Save cache before shutdown
-        self.cache.save()
+        # Cleanup shared resources
+        self.token_loader.cleanup()
         
         # Print final stats
         if self.verbose:
             self.print_session_summary()
             print(f"🤖 TVB: 🔄 Total Cycles: {cycle_count}")
-            self.cache.print_stats()
+            
+            # Print shared manager stats
+            shared_stats = self.get_cache_stats()
+            print(f"\n🤖 TVB: 🌐 Shared Manager Final Stats:")
+            print(f"  🚀 Factory queries saved: {shared_stats.get('factory_queries_saved', 0)}")
+            print(f"  🤖 Bots served: {shared_stats.get('registered_bots', 0)}")
 
 
 # Example usage for testing
 if __name__ == "__main__":
     # Test bot initialization (won't actually run without config)
-    print("🤖 TVB: Core bot class loaded successfully!")
+    print("🤖 TVB: Optimized core bot class loaded successfully!")
     print("Use main.py to run the bot with proper configuration.")

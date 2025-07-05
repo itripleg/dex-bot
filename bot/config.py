@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
 Enhanced configuration loading with environment security for public repositories
-FIXED: Proper CLI argument handling for private keys
+ADDED: Automatic key pair generation when no private key is provided
 """
 
 import json
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+from eth_account import Account
 
 class EnvironmentManager:
     """Secure environment variable management"""
@@ -28,8 +29,29 @@ class EnvironmentManager:
                 self.loaded_files.append(str(env_path))
                 print(f"🤖 TVB: 📄 Loaded environment from {env_file}")
     
+    def _generate_new_keypair(self):
+        """Generate a new random Ethereum key pair"""
+        print("🤖 TVB: 🔑 No private key found - generating new random key pair...")
+        
+        # Generate new account
+        account = Account.create()
+        
+        print("🤖 TVB: ✨ New key pair generated!")
+        print("🤖 TVB: " + "="*60)
+        print(f"🤖 TVB: 📍 PUBLIC ADDRESS: {account.address}")
+        print(f"🤖 TVB: 🔐 PRIVATE KEY: {account.key.hex()}")
+        print("🤖 TVB: " + "="*60)
+        print("🤖 TVB: ⚠️  IMPORTANT SECURITY NOTES:")
+        print("🤖 TVB: • Save this private key immediately!")
+        print("🤖 TVB: • Add it to your .env.local file as PRIVATE_KEY=...")
+        print("🤖 TVB: • Never share your private key with anyone!")
+        print("🤖 TVB: • Fund this address with AVAX before trading!")
+        print("🤖 TVB: " + "="*60)
+        
+        return account.key.hex()
+    
     def get_private_key(self, config, override_key=None, bot_name=None):
-        """Get private key with multiple fallback sources"""
+        """Get private key with multiple fallback sources and auto-generation"""
         # FIXED: Check CLI override FIRST
         if override_key:
             key = override_key
@@ -56,10 +78,12 @@ class EnvironmentManager:
                 print(f"🤖 TVB: 🔑 Private key loaded from: {source_name}")
                 return key
         
-        raise ValueError(self._get_private_key_error_message(bot_name))
+        # NEW: If no key found anywhere, generate a new one
+        print("🤖 TVB: 🔍 No private key found in any source...")
+        return self._generate_new_keypair()
     
     def _get_private_key_error_message(self, bot_name):
-        """Generate helpful error message for missing private key"""
+        """Generate helpful error message for missing private key (now unused due to auto-generation)"""
         bot_specific = f"BOT_{bot_name.upper()}_PRIVATE_KEY" if bot_name else None
         
         message = [
@@ -178,7 +202,7 @@ def validate_config(config):
     print("🤖 TVB: ✅ Configuration validation passed")
 
 def get_private_key(config, override_key=None, bot_name=None):
-    """Get private key with security and multiple sources"""
+    """Get private key with security, multiple sources, and auto-generation"""
     return _env_manager.get_private_key(config, override_key, bot_name)
 
 def merge_config_with_environment(config, use_local=False):
@@ -225,6 +249,10 @@ def merge_config_with_environment(config, use_local=False):
     )
     if webhook_secret:
         enhanced_config['botSecret'] = webhook_secret
+    elif not config.get('botSecret') or config.get('botSecret') == "SET_IN_ENV_LOCAL":
+        # Fallback to "dev" if no webhook secret is configured
+        enhanced_config['botSecret'] = "dev"
+        print("🤖 TVB: 🔐 Using default webhook secret: 'dev' (set WEBHOOK_SECRET in .env.local for production)")
     
     # Get factory address from environment
     factory_address = _env_manager.get_secure_value(
@@ -351,6 +379,41 @@ def create_public_config_template(config, output_path=None):
     
     return sanitized
 
+def create_example_env_file(generated_key=None):
+    """Create an example .env.local file with the generated key"""
+    env_content = """# TVB Bot Environment Variables
+# Copy this to .env.local and add your actual values
+
+# Network Configuration
+RPC_URL=https://avax-fuji.g.alchemy.com/v2/YOUR_API_KEY_HERE
+FACTORY_ADDRESS=0xc117C6c34CB75213f73d538Af643DA0fAb30B9bc
+
+# Webhook Configuration (optional)
+WEBHOOK_URL=http://localhost:3000/api/tvb/webhook
+WEBHOOK_SECRET=your_webhook_secret_here
+
+# Bot Configuration
+DEFAULT_CACHE_DURATION_HOURS=6
+LOG_LEVEL=INFO
+"""
+    
+    if generated_key:
+        env_content += f"\n# Generated Private Key (KEEP SECURE!)\nPRIVATE_KEY={generated_key}\n"
+    else:
+        env_content += "\n# Private Key (add your own)\n# PRIVATE_KEY=0x123...\n"
+    
+    env_path = Path('.env.local')
+    
+    # Only create if it doesn't exist
+    if not env_path.exists():
+        with open(env_path, 'w') as f:
+            f.write(env_content)
+        print(f"🤖 TVB: 📄 Created example environment file: {env_path}")
+        if generated_key:
+            print("🤖 TVB: 🔐 Your generated private key has been saved to .env.local")
+    else:
+        print(f"🤖 TVB: ⚠️  .env.local already exists, not overwriting")
+
 # CLI helper for config management
 def main():
     """CLI tool for config management"""
@@ -360,12 +423,23 @@ def main():
     parser.add_argument('--sanitize', type=str, help='Sanitize config file for public sharing')
     parser.add_argument('--validate', type=str, help='Validate config file')
     parser.add_argument('--create-env', action='store_true', help='Create example environment files')
+    parser.add_argument('--generate-key', action='store_true', help='Generate a new private key and create .env.local')
     
     args = parser.parse_args()
     
+    if args.generate_key:
+        # Generate new key and create env file
+        from eth_account import Account
+        account = Account.create()
+        print("🤖 TVB: 🔑 Generated new private key:")
+        print(f"Address: {account.address}")
+        print(f"Private Key: {account.key.hex()}")
+        create_example_env_file(account.key.hex())
+        return
+    
     if args.create_env:
-        from .security import create_example_env_files
-        create_example_env_files()
+        create_example_env_file()
+        return
     
     if args.sanitize:
         config = load_bot_config(args.sanitize)

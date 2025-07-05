@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Enhanced Webhook Manager with session balance tracking and P&L calculations
+Updated with dev secret fallback and missing methods
 """
 
 import json
@@ -16,7 +17,7 @@ class WebhookManager:
         self.display_name = display_name
         self.avatar_url = avatar_url
         self.webhook_url = webhook_url
-        self.bot_secret = bot_secret
+        self.bot_secret = bot_secret or "dev"  # Fallback to "dev" if None
         self.phrases = phrases
         self.bio = bio
         self.get_balance_callback = get_balance_callback  # Callback to get current AVAX balance
@@ -43,11 +44,15 @@ class WebhookManager:
             "last_error": None
         }
         
-        self.enabled = bool(webhook_url and bot_secret)
+        self.enabled = bool(webhook_url and self.bot_secret)
         
         if self.enabled:
             print(f"🤖 TVB: 📡 Webhook manager initialized for {display_name}")
             print(f"🤖 TVB: 🎯 Target: {webhook_url}")
+            if self.bot_secret == "dev":
+                print("🤖 TVB: 🔐 Using default webhook secret: 'dev' (development mode)")
+            else:
+                print("🤖 TVB: 🔐 Using configured webhook secret")
             if bio:
                 print(f"🤖 TVB: 📝 Bio: {bio[:50]}..." if len(bio) > 50 else f"🤖 TVB: 📝 Bio: {bio}")
         else:

@@ -1,7 +1,8 @@
+# main.py
 #!/usr/bin/env python3
 """
 Transparent Volume Bot (TVB) - Main Entry Point
-Fixed imports for direct execution with working --private-key and --network flags
+Enhanced with automatic key pair generation when no private key is provided
 """
 
 import argparse
@@ -15,17 +16,57 @@ sys.path.insert(0, str(project_root))
 
 # Now use absolute imports
 from bot.core import TransparentVolumeBot
-from bot.config import load_bot_config, validate_config, merge_config_with_environment
+from bot.config import load_bot_config, validate_config, merge_config_with_environment, create_example_env_file
+from eth_account import Account
+
+def generate_key_if_needed():
+    """Helper function to generate key pair when explicitly requested"""
+    print("🤖 TVB: 🔑 Generating new random key pair...")
+    
+    account = Account.create()
+    
+    print("🤖 TVB: ✨ New key pair generated!")
+    print("🤖 TVB: " + "="*60)
+    print(f"🤖 TVB: 📍 PUBLIC ADDRESS: {account.address}")
+    print(f"🤖 TVB: 🔐 PRIVATE KEY: {account.key.hex()}")
+    print("🤖 TVB: " + "="*60)
+    print("🤖 TVB: ⚠️  IMPORTANT SECURITY NOTES:")
+    print("🤖 TVB: • Save this private key immediately!")
+    print("🤖 TVB: • Add it to your .env.local file as PRIVATE_KEY=...")
+    print("🤖 TVB: • Never share your private key with anyone!")
+    print("🤖 TVB: • Fund this address with AVAX before trading!")
+    print("🤖 TVB: " + "="*60)
+    
+    # Offer to create .env.local file
+    try:
+        user_input = input("🤖 TVB: Create .env.local file with this key? (y/N): ").strip().lower()
+        if user_input in ['y', 'yes']:
+            create_example_env_file(account.key.hex())
+            print("🤖 TVB: ✅ .env.local file created with your private key!")
+        else:
+            print("🤖 TVB: ⚠️  Remember to save your private key!")
+    except KeyboardInterrupt:
+        print("\n🤖 TVB: ⚠️  Remember to save your private key!")
+    
+    return account.key.hex()
 
 def main():
-    """Main entry point with clean argument parsing"""
+    """Main entry point with enhanced argument parsing and auto key generation"""
     parser = argparse.ArgumentParser(
-        description='Transparent Volume Bot (TVB) - A personality-driven trading bot.',
+        description='Transparent Volume Bot (TVB) - A personality-driven trading bot with auto key generation.',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python main.py --config configs/bullish_billy.json --private-key 0x123... --network https://avax-fuji.g.alchemy.com/v2/YOUR_API_KEY --auto
-  python main.py --config configs/bullish_billy.json --auto
+  # Generate a new wallet and run bot (auto-generates keys if none provided)
+  python main.py --config configs/bullish_billy.json --network https://avax-fuji.g.alchemy.com/v2/YOUR_API_KEY --auto
+  
+  # Use existing private key
+  python main.py --config configs/bullish_billy.json --private-key 0x123... --auto
+  
+  # Generate a new key pair and save to .env.local
+  python main.py --generate-key
+  
+  # Test configuration without trading
   python main.py --config configs/bullish_billy.json --dry-run
         """
     )
@@ -33,8 +74,13 @@ Examples:
     parser.add_argument(
         '--config', 
         type=str, 
-        required=True, 
         help='Path to the JSON configuration file for the bot.'
+    )
+    
+    parser.add_argument(
+        '--generate-key',
+        action='store_true',
+        help='Generate a new private key and exit (option to save to .env.local)'
     )
     
     parser.add_argument(
@@ -46,7 +92,7 @@ Examples:
     parser.add_argument(
         '--private-key', 
         type=str, 
-        help='Private key for signing transactions (overrides config/env).'
+        help='Private key for signing transactions (overrides config/env). If not provided, a new one will be generated.'
     )
     
     parser.add_argument(
@@ -81,6 +127,18 @@ Examples:
     
     args = parser.parse_args()
     
+    # Handle key generation mode
+    if args.generate_key:
+        generate_key_if_needed()
+        return
+    
+    # Require config for all other operations
+    if not args.config:
+        print("🤖 TVB: ❌ --config is required (unless using --generate-key)")
+        print("🤖 TVB: Example: python main.py --config configs/bullish_billy.json --auto")
+        parser.print_help()
+        sys.exit(1)
+    
     try:
         print("🤖 TVB: Loading configuration...")
         config = load_bot_config(args.config)
@@ -97,6 +155,8 @@ Examples:
         private_key_override = args.private_key
         if private_key_override:
             print("🤖 TVB: 🔑 Using CLI private key override")
+        else:
+            print("🤖 TVB: 🔑 No private key provided - will auto-generate if needed")
         
         print("🤖 TVB: Validating configuration...")
         validate_config(config)
@@ -116,6 +176,14 @@ Examples:
             print(f"🤖 TVB: Balance: {bot.get_avax_balance():.6f} AVAX")
             print(f"🤖 TVB: Network: {config.get('rpcUrl', 'Unknown')}")
             print(f"🤖 TVB: Tradeable tokens: {len(bot.tokens)}")
+            
+            # Show funding instructions if balance is 0
+            if bot.get_avax_balance() == 0:
+                print("\n🤖 TVB: ⚠️  To start trading, fund your wallet:")
+                print(f"🤖 TVB: Send AVAX to: {bot.account.address}")
+                print("🤖 TVB: Recommended minimum: 0.1 AVAX for testing")
+                print("🤖 TVB: Avalanche Fuji Testnet Faucet: https://faucet.avax.network/")
+            
             return
         
         if args.auto:
@@ -123,7 +191,17 @@ Examples:
             bot.run()
         else:
             print("🤖 TVB: ✅ Bot initialized successfully!")
-            print("🤖 TVB: Add --auto flag to start trading automatically.")
+            print(f"🤖 TVB: Wallet: {bot.account.address}")
+            print(f"🤖 TVB: Balance: {bot.get_avax_balance():.6f} AVAX")
+            
+            # Show funding instructions if balance is 0
+            if bot.get_avax_balance() == 0:
+                print("\n🤖 TVB: ⚠️  Your wallet has no AVAX! Fund it first:")
+                print(f"🤖 TVB: Send AVAX to: {bot.account.address}")
+                print("🤖 TVB: Recommended minimum: 0.1 AVAX for testing")
+                print("🤖 TVB: Avalanche Fuji Testnet Faucet: https://faucet.avax.network/")
+            
+            print("\n🤖 TVB: Add --auto flag to start trading automatically.")
             print(f"🤖 TVB: Example: python main.py --config {args.config} --auto")
             
     except KeyboardInterrupt:
