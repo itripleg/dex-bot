@@ -375,3 +375,24 @@ class WebhookManager:
         stats["wallet_address"] = self.wallet_address
         
         return stats
+    
+def send_error_update(self, error_message, error_type="general_error"):
+    """Send error notification with personality phrase"""
+    return self.send_update("error", {
+        "message": f"Encountered an issue: {error_message}",
+        "errorType": error_type,
+        "errorDetails": error_message
+    })
+
+def send_balance_alert(self, balance, threshold, alert_type="low"):
+    """Send balance alert notification"""
+    return self.send_update("balance_alert", {
+        "message": f"Balance alert: {balance:.6f} AVAX (threshold: {threshold:.6f})",
+        "currentBalance": balance,
+        "threshold": threshold,
+        "alertType": alert_type
+    })
+
+def send_shutdown_notification(self, shutdown_info):
+    """Send shutdown notification with session summary"""
+    return self.send_update("shutdown", shutdown_info)

@@ -262,7 +262,7 @@ class TransparentVolumeBot:
         
         if success and self.verbose:
             self.logger.success(f"Trade cycle completed for {token['symbol']}")
-        
+    
     def _attempt_token_creation(self):
         """Attempt to create a new token with personality-driven concept"""
         self.logger.info("🎨 Considering token creation...")
@@ -325,7 +325,59 @@ class TransparentVolumeBot:
         print(f"    🚀 Queries saved: {shared_stats.get('factory_queries_saved', 0)}")
         print(f"    ⏰ Next refresh: {shared_stats.get('next_refresh_in_minutes', 0):.1f}min")
     
-    # ... rest of the methods remain the same ...
+    def run(self):
+        """Main bot trading loop with graceful shutdown handling"""
+        try:
+            self.logger.info("🚀 Starting main trading loop...")
+            
+            cycle_count = 0
+            last_heartbeat = 0
+            heartbeat_interval = 300  # 5 minutes
+            
+            while True:
+                cycle_count += 1
+                cycle_start_time = time.time()
+                
+                try:
+                    if self.verbose:
+                        self.logger.cycle(cycle_count, "Starting trade cycle")
+                    
+                    # Execute trading logic
+                    self.execute_trade_cycle()
+                    
+                    # Send heartbeat every 5 minutes
+                    if time.time() - last_heartbeat > heartbeat_interval:
+                        self.send_heartbeat()
+                        last_heartbeat = time.time()
+                    
+                    # Calculate sleep time based on personality
+                    min_interval = self.config.get('minInterval', 15)
+                    max_interval = self.config.get('maxInterval', 60)
+                    sleep_time = random.uniform(min_interval, max_interval)
+                    
+                    if self.verbose:
+                        self.logger.info(f"💤 Cycle {cycle_count} complete, sleeping {sleep_time:.1f}s")
+                    
+                    time.sleep(sleep_time)
+                    
+                except KeyboardInterrupt:
+                    self._handle_shutdown(cycle_count, "user")
+                    break
+                except Exception as e:
+                    self.logger.error(f"Trade cycle error: {e}")
+                    # Send error webhook
+                    if self.webhook:
+                        self.webhook.send_error_update(str(e), "trade_cycle_error")
+                    
+                    # Sleep a bit before retrying
+                    time.sleep(10)
+                    
+        except KeyboardInterrupt:
+            self._handle_shutdown(cycle_count, "user")
+        except Exception as e:
+            self._handle_shutdown(cycle_count, "crash", str(e))
+        
+        self.logger.info("👋 Bot trading loop ended")
     
     def _handle_shutdown(self, cycle_count, reason, error_msg=None):
         """Handle bot shutdown gracefully with enhanced reporting"""
