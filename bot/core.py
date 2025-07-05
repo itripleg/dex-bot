@@ -325,18 +325,25 @@ class TransparentVolumeBot:
         print(f"    🚀 Queries saved: {shared_stats.get('factory_queries_saved', 0)}")
         print(f"    ⏰ Next refresh: {shared_stats.get('next_refresh_in_minutes', 0):.1f}min")
     
+# Enhanced bot core with better heartbeat management
     def run(self):
-        """Main bot trading loop with graceful shutdown handling"""
+        """Enhanced main trading loop with better heartbeat management"""
         try:
-            self.logger.info("🚀 Starting main trading loop...")
+            self.logger.info("🚀 Starting enhanced trading loop with improved heartbeat...")
             
             cycle_count = 0
             last_heartbeat = 0
-            heartbeat_interval = 300  # 5 minutes
+            last_keepalive = 0
+            heartbeat_interval = 120  # 2 minutes
+            keepalive_interval = 60   # 1 minute
+            
+            # Send initial heartbeat
+            self.send_heartbeat()
+            last_heartbeat = time.time()
             
             while True:
                 cycle_count += 1
-                cycle_start_time = time.time()
+                current_time = time.time()
                 
                 try:
                     if self.verbose:
@@ -345,10 +352,20 @@ class TransparentVolumeBot:
                     # Execute trading logic
                     self.execute_trade_cycle()
                     
-                    # Send heartbeat every 5 minutes
-                    if time.time() - last_heartbeat > heartbeat_interval:
-                        self.send_heartbeat()
-                        last_heartbeat = time.time()
+                    # Send heartbeat every 2 minutes
+                    if current_time - last_heartbeat >= heartbeat_interval:
+                        success = self.send_heartbeat()
+                        if success:
+                            last_heartbeat = current_time
+                        else:
+                            # If heartbeat fails, try again sooner
+                            self.logger.warning("Heartbeat failed, will retry sooner")
+                    
+                    # Send keepalive every minute if no recent heartbeat
+                    elif current_time - last_keepalive >= keepalive_interval:
+                        if hasattr(self.webhook, 'send_keepalive'):
+                            self.webhook.send_keepalive()
+                            last_keepalive = current_time
                     
                     # Calculate sleep time based on personality
                     min_interval = self.config.get('minInterval', 15)
@@ -365,9 +382,14 @@ class TransparentVolumeBot:
                     break
                 except Exception as e:
                     self.logger.error(f"Trade cycle error: {e}")
+                    
                     # Send error webhook
                     if self.webhook:
                         self.webhook.send_error_update(str(e), "trade_cycle_error")
+                    
+                    # Force heartbeat after error to maintain connection
+                    if hasattr(self.webhook, 'force_heartbeat'):
+                        self.webhook.force_heartbeat()
                     
                     # Sleep a bit before retrying
                     time.sleep(10)
@@ -378,6 +400,7 @@ class TransparentVolumeBot:
             self._handle_shutdown(cycle_count, "crash", str(e))
         
         self.logger.info("👋 Bot trading loop ended")
+
     
     def _handle_shutdown(self, cycle_count, reason, error_msg=None):
         """Handle bot shutdown gracefully with enhanced reporting"""
