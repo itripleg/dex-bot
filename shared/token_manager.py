@@ -1,8 +1,8 @@
-# shared/token_manager.py
+# shared/token_manager.py - Fixed shared token manager with truly shared loading
 #!/usr/bin/env python3
 """
 Shared Token Manager for Multi-Bot Optimization
-Centralizes token list management to avoid redundant factory queries
+FIXED: Eliminates ALL redundant factory queries and coordinates token loading
 """
 
 import time
@@ -30,8 +30,8 @@ class TokenInfo:
 
 class SharedTokenManager:
     """
-    Centralized token manager that multiple bots can share
-    Reduces redundant factory contract calls
+    FIXED: Centralized token manager that truly shares tokens across all bots
+    Only ONE bot loads tokens, all others get the shared result
     """
     
     _instance = None
@@ -58,12 +58,18 @@ class SharedTokenManager:
         self.last_refresh = None
         self.refresh_interval = timedelta(minutes=30)  # Refresh every 30 minutes
         self.is_refreshing = False
+        self.refresh_in_progress = False  # Flag to prevent multiple refreshes
         
         # Factory contract references (set by first bot)
         self.factory_contract = None
         self.token_abi = None
         self.w3 = None
-        self.current_factory_address = None  # Track factory address changes
+        self.current_factory_address = None
+        
+        # COORDINATION: Track which bot is the "coordinator" (first to register)
+        self.coordinator_bot = None
+        self.tokens_loaded = False  # Flag to track if tokens have been loaded
+        self.loading_event = threading.Event()  # Event to signal when loading is complete
         
         # Statistics
         self.stats = {
@@ -71,7 +77,8 @@ class SharedTokenManager:
             "bots_served": 0,
             "cache_hits": 0,
             "factory_queries_saved": 0,
-            "factory_address_changes": 0
+            "factory_address_changes": 0,
+            "coordinated_loads": 0
         }
         
         # Bot registration
@@ -80,32 +87,48 @@ class SharedTokenManager:
         # Thread safety
         self.data_lock = threading.RLock()
         
-        print("🤖 TVB: 🌐 Shared Token Manager initialized")
+        # Import clean logger
+        try:
+            from bot.logger import BotLogger
+            self.logger = BotLogger
+        except ImportError:
+            self.logger = None
+        
+        if self.logger:
+            self.logger.system("🌐 Shared Token Manager initialized")
+        else:
+            print("🤖 TVB: 🌐 Shared Token Manager initialized")
     
     def register_bot(self, bot_name: str, factory_contract, token_abi, w3, logger=None):
-        """Register a bot with the shared manager"""
+        """Register a bot with the shared manager and coordinate token loading"""
         with self.data_lock:
             # Check if factory address changed
             new_factory_address = factory_contract.address
             
             if self.current_factory_address is None:
                 self.current_factory_address = new_factory_address
-                print(f"🤖 TVB: 📜 Factory address set: {new_factory_address}")
+                if self.logger:
+                    self.logger.system(f"📜 Factory address set: {new_factory_address}")
             elif self.current_factory_address != new_factory_address:
-                print(f"🤖 TVB: 🔄 FACTORY ADDRESS CHANGED!")
-                print(f"🤖 TVB: Old: {self.current_factory_address}")
-                print(f"🤖 TVB: New: {new_factory_address}")
-                print(f"🤖 TVB: 🧹 Clearing all cached tokens...")
+                if self.logger:
+                    self.logger.system("🔄 FACTORY ADDRESS CHANGED!", "warning")
+                    self.logger.system(f"Old: {self.current_factory_address}")
+                    self.logger.system(f"New: {new_factory_address}")
+                    self.logger.system("🧹 Clearing all cached tokens...")
                 
                 # Clear all cached data
                 self.tokens.clear()
                 self.tradeable_tokens.clear()
                 self.last_refresh = None
+                self.tokens_loaded = False
+                self.loading_event.clear()
                 self.current_factory_address = new_factory_address
+                self.coordinator_bot = None  # Reset coordinator
                 
                 # Update stats
                 self.stats["factory_address_changes"] += 1
             
+            # Register bot
             self.registered_bots[bot_name] = {
                 "registered_at": datetime.utcnow().isoformat() + "Z",
                 "logger": logger
@@ -116,17 +139,35 @@ class SharedTokenManager:
                 self.factory_contract = factory_contract
                 self.token_abi = token_abi
                 self.w3 = w3
-                print(f"🤖 TVB: 📜 Factory contract set by {bot_name}")
+                if self.logger:
+                    self.logger.system(f"📜 Factory contract set by {bot_name}")
+            
+            # COORDINATION: Set first bot as coordinator
+            if self.coordinator_bot is None:
+                self.coordinator_bot = bot_name
+                if self.logger:
+                    self.logger.system(f"👑 {bot_name} designated as token coordinator")
             
             self.stats["bots_served"] += 1
-            print(f"🤖 TVB: 📝 Bot registered: {bot_name} (Total: {len(self.registered_bots)})")
+            if self.logger:
+                self.logger.system(f"📝 Bot registered: {bot_name} (Total: {len(self.registered_bots)})")
     
     def unregister_bot(self, bot_name: str):
         """Unregister a bot from the shared manager"""
         with self.data_lock:
             if bot_name in self.registered_bots:
                 del self.registered_bots[bot_name]
-                print(f"🤖 TVB: 📤 Bot unregistered: {bot_name} (Remaining: {len(self.registered_bots)})")
+                
+                # If coordinator is leaving, assign new one
+                if self.coordinator_bot == bot_name and self.registered_bots:
+                    self.coordinator_bot = list(self.registered_bots.keys())[0]
+                    if self.logger:
+                        self.logger.system(f"👑 {self.coordinator_bot} is now token coordinator")
+                elif not self.registered_bots:
+                    self.coordinator_bot = None
+                
+                if self.logger:
+                    self.logger.system(f"📤 Bot unregistered: {bot_name} (Remaining: {len(self.registered_bots)})")
     
     def needs_refresh(self) -> bool:
         """Check if token data needs refreshing"""
@@ -137,38 +178,82 @@ class SharedTokenManager:
         return age > self.refresh_interval
     
     def get_tokens_for_bot(self, bot_name: str, force_refresh: bool = False) -> List[dict]:
-        """Get tradeable tokens for a specific bot"""
+        """
+        FIXED: Get tradeable tokens with TRUE coordination
+        Only coordinator loads, others wait for result
+        """
         with self.data_lock:
-            # Check if refresh needed
-            if force_refresh or self.needs_refresh():
-                if not self.is_refreshing:
-                    self._refresh_tokens()
-                else:
-                    # Wait for ongoing refresh to complete
-                    self._wait_for_refresh()
-            else:
+            # If tokens already loaded and fresh, return immediately
+            if self.tokens_loaded and not force_refresh and not self.needs_refresh():
                 self.stats["cache_hits"] += 1
                 self.stats["factory_queries_saved"] += 1
-                print(f"🤖 TVB: 💨 {bot_name} using cached tokens ({len(self.tradeable_tokens)} available)")
+                
+                if self.logger:
+                    self.logger.system(f"💨 {bot_name} using shared tokens ({len(self.tradeable_tokens)} available)")
+                
+                return [token.to_dict() for token in self.tradeable_tokens]
             
-            # Return tradeable tokens as dict for backwards compatibility
+            # Check if this bot is the coordinator
+            is_coordinator = (bot_name == self.coordinator_bot)
+            
+            if is_coordinator and not self.refresh_in_progress:
+                # Coordinator bot loads tokens for everyone
+                if self.logger:
+                    self.logger.system(f"👑 {bot_name} coordinating token refresh for all bots...")
+                
+                self.refresh_in_progress = True
+                self.loading_event.clear()
+                
+                try:
+                    self._refresh_tokens()
+                    self.tokens_loaded = True
+                    self.stats["coordinated_loads"] += 1
+                finally:
+                    self.refresh_in_progress = False
+                    self.loading_event.set()  # Signal other bots that loading is complete
+                
+                if self.logger:
+                    self.logger.system(f"✅ {bot_name} completed coordinated refresh - {len(self.tradeable_tokens)} tokens available")
+                
+            elif not is_coordinator:
+                # Non-coordinator bots wait for coordinator to finish
+                if self.logger:
+                    self.logger.system(f"⏳ {bot_name} waiting for coordinator {self.coordinator_bot} to load tokens...")
+                
+                # Wait for coordinator to finish loading (with timeout)
+                loading_completed = self.loading_event.wait(timeout=60)  # 60 second timeout
+                
+                if not loading_completed:
+                    if self.logger:
+                        self.logger.system(f"⏰ {bot_name} timeout waiting for coordinator - loading independently", "warning")
+                    # Fallback: load independently if coordinator takes too long
+                    self._refresh_tokens()
+                    self.tokens_loaded = True
+                else:
+                    self.stats["factory_queries_saved"] += 1
+                    if self.logger:
+                        self.logger.system(f"✅ {bot_name} received shared tokens from coordinator")
+            
+            # Return the shared tokens
             return [token.to_dict() for token in self.tradeable_tokens]
     
     def _refresh_tokens(self):
         """Refresh token list from factory contract"""
         if self.factory_contract is None:
-            print("🤖 TVB: ⚠️ No factory contract available for refresh")
+            if self.logger:
+                self.logger.system("⚠️ No factory contract available for refresh", "warning")
             return
         
-        self.is_refreshing = True
         start_time = time.time()
         
         try:
-            print("🤖 TVB: 🔄 Shared Token Manager refreshing token list...")
+            if self.logger:
+                self.logger.system("🔄 Shared Token Manager refreshing token list...")
             
             # Get all token addresses from factory
             token_addresses = self.factory_contract.functions.getAllTokens().call()
-            print(f"🤖 TVB: 📡 Factory returned {len(token_addresses)} token addresses")
+            if self.logger:
+                self.logger.system(f"📡 Factory returned {len(token_addresses)} token addresses")
             
             new_tokens = {}
             new_tradeable = []
@@ -201,15 +286,16 @@ class SharedTokenManager:
                     # Add to tradeable list if appropriate
                     if state in [1, 4]:  # TRADING or RESUMED
                         new_tradeable.append(token_info)
-                        status = "✅ Tradeable"
-                    else:
-                        status = "⏭️ Not trading"
                     
-                    if i % 10 == 0 or i == len(token_addresses):
-                        print(f"🤖 TVB: {status}: {symbol} ({name}) [{i}/{len(token_addresses)}]")
+                    # Only log progress every 5 tokens to reduce spam
+                    if i % 5 == 0 or i == len(token_addresses):
+                        status = "✅ Tradeable" if state in [1, 4] else "⏭️ Not trading"
+                        if self.logger:
+                            self.logger.system(f"{status}: {symbol} [{i}/{len(token_addresses)}]")
                     
                 except Exception as e:
-                    print(f"🤖 TVB: ❌ Error processing {address[:10]}... [{i}/{len(token_addresses)}]: {e}")
+                    if self.logger:
+                        self.logger.system(f"❌ Error processing {address[:10]}... [{i}/{len(token_addresses)}]: {e}", "error")
             
             # Update shared data
             self.tokens = new_tokens
@@ -218,28 +304,23 @@ class SharedTokenManager:
             self.stats["total_refreshes"] += 1
             
             elapsed = time.time() - start_time
-            print(f"🤖 TVB: ✅ Shared refresh complete: {len(new_tradeable)} tradeable tokens in {elapsed:.2f}s")
-            print(f"🤖 TVB: 📊 Serving {len(self.registered_bots)} bots - saved {len(self.registered_bots) - 1} redundant queries!")
+            
+            if self.logger:
+                self.logger.system(f"✅ Shared refresh complete: {len(new_tradeable)} tradeable tokens in {elapsed:.2f}s")
+                self.logger.system(f"📊 Serving {len(self.registered_bots)} bots - saved {len(self.registered_bots) - 1} redundant queries!")
             
         except Exception as e:
-            print(f"🤖 TVB: ❌ Shared token refresh error: {e}")
-        finally:
-            self.is_refreshing = False
-    
-    def _wait_for_refresh(self, timeout: int = 30):
-        """Wait for ongoing refresh to complete"""
-        start_time = time.time()
-        while self.is_refreshing and (time.time() - start_time) < timeout:
-            time.sleep(0.5)
-        
-        if self.is_refreshing:
-            print("🤖 TVB: ⏰ Timeout waiting for token refresh")
+            if self.logger:
+                self.logger.system(f"❌ Shared token refresh error: {e}", "error")
     
     def force_refresh(self):
         """Force a token refresh regardless of cache age"""
         with self.data_lock:
             self.last_refresh = None
-            self._refresh_tokens()
+            self.tokens_loaded = False
+            self.loading_event.clear()
+            if self.logger:
+                self.logger.system("🔄 Forced refresh requested - clearing cache")
     
     def get_stats(self) -> dict:
         """Get shared manager statistics"""
@@ -251,7 +332,9 @@ class SharedTokenManager:
                 "tradeable_tokens": len(self.tradeable_tokens),
                 "last_refresh": self.last_refresh.isoformat() + "Z" if self.last_refresh else None,
                 "next_refresh_in_minutes": self._get_next_refresh_minutes(),
-                "is_refreshing": self.is_refreshing
+                "is_refreshing": self.refresh_in_progress,
+                "coordinator_bot": self.coordinator_bot,
+                "tokens_loaded": self.tokens_loaded
             })
             return stats
     
@@ -265,23 +348,37 @@ class SharedTokenManager:
         return max(0, time_until.total_seconds() / 60)
     
     def print_stats(self):
-        """Print shared manager statistics"""
+        """Print shared manager statistics with clean logging"""
         stats = self.get_stats()
         
-        print("\n🤖 TVB: 📊 Shared Token Manager Statistics:")
-        print(f"  🤖 Registered bots: {stats['registered_bots']}")
-        print(f"  🎯 Total tokens: {stats['total_tokens']}")
-        print(f"  ✅ Tradeable tokens: {stats['tradeable_tokens']}")
-        print(f"  🔄 Total refreshes: {stats['total_refreshes']}")
-        print(f"  💨 Cache hits: {stats['cache_hits']}")
-        print(f"  🚀 Factory queries saved: {stats['factory_queries_saved']}")
-        print(f"  🔄 Factory address changes: {stats['factory_address_changes']}")
-        print(f"  ⏰ Next refresh in: {stats['next_refresh_in_minutes']:.1f} minutes")
-        
-        if stats['last_refresh']:
-            print(f"  📅 Last refresh: {stats['last_refresh']}")
-        
-        print(f"  🔧 Currently refreshing: {'Yes' if stats['is_refreshing'] else 'No'}")
+        if self.logger:
+            self.logger.section("Shared Token Manager Statistics")
+            self.logger.system(f"🤖 Registered bots: {stats['registered_bots']}")
+            self.logger.system(f"👑 Coordinator: {stats['coordinator_bot'] or 'None'}")
+            self.logger.system(f"🎯 Total tokens: {stats['total_tokens']}")
+            self.logger.system(f"✅ Tradeable tokens: {stats['tradeable_tokens']}")
+            self.logger.system(f"🔄 Total refreshes: {stats['total_refreshes']}")
+            self.logger.system(f"🎯 Coordinated loads: {stats['coordinated_loads']}")
+            self.logger.system(f"💨 Cache hits: {stats['cache_hits']}")
+            self.logger.system(f"🚀 Factory queries saved: {stats['factory_queries_saved']}")
+            self.logger.system(f"⏰ Next refresh in: {stats['next_refresh_in_minutes']:.1f} minutes")
+            
+            if stats['last_refresh']:
+                self.logger.system(f"📅 Last refresh: {stats['last_refresh']}")
+            
+            self.logger.system(f"🔧 Currently refreshing: {'Yes' if stats['is_refreshing'] else 'No'}")
+        else:
+            # Fallback to old print statements
+            print("\n🤖 TVB: 📊 Shared Token Manager Statistics:")
+            print(f"  🤖 Registered bots: {stats['registered_bots']}")
+            print(f"  👑 Coordinator: {stats['coordinator_bot'] or 'None'}")
+            print(f"  🎯 Total tokens: {stats['total_tokens']}")
+            print(f"  ✅ Tradeable tokens: {stats['tradeable_tokens']}")
+            print(f"  🔄 Total refreshes: {stats['total_refreshes']}")
+            print(f"  🎯 Coordinated loads: {stats['coordinated_loads']}")
+            print(f"  💨 Cache hits: {stats['cache_hits']}")
+            print(f"  🚀 Factory queries saved: {stats['factory_queries_saved']}")
+            print(f"  ⏰ Next refresh in: {stats['next_refresh_in_minutes']:.1f} minutes")
     
     def get_token_by_address(self, address: str) -> Optional[TokenInfo]:
         """Get specific token by address"""
@@ -291,13 +388,17 @@ class SharedTokenManager:
     def cleanup(self):
         """Cleanup resources when shutting down"""
         with self.data_lock:
-            print("🤖 TVB: 🧹 Shared Token Manager cleanup")
+            if self.logger:
+                self.logger.system("🧹 Shared Token Manager cleanup")
             self.registered_bots.clear()
+            self.coordinator_bot = None
+            self.tokens_loaded = False
+            self.loading_event.clear()
 
 
-# Optimized Token Loader that uses shared manager
+# FIXED: Optimized Token Loader that truly uses shared coordination
 class OptimizedTokenLoader:
-    """Token loader that uses the shared token manager"""
+    """Token loader that uses TRUE shared coordination"""
     
     def __init__(self, bot_name: str, factory_contract, token_abi, w3, logger=None):
         self.bot_name = bot_name
@@ -312,24 +413,32 @@ class OptimizedTokenLoader:
         )
     
     def load_tokens_optimized(self, force_refresh: bool = False) -> List[dict]:
-        """Load tokens using shared manager"""
+        """
+        FIXED: Load tokens using TRUE shared coordination
+        Only coordinator loads, others get shared result
+        """
         if self.logger:
-            self.logger.info("🚀 Loading tokens via shared manager...")
-        else:
-            print(f"🤖 TVB: 🚀 {self.bot_name} loading tokens via shared manager...")
+            self.logger.info("🚀 Loading tokens via shared coordination...")
         
         start_time = time.time()
         
         try:
+            # Get tokens through shared manager coordination
             tokens = self.shared_manager.get_tokens_for_bot(self.bot_name, force_refresh)
             
             elapsed = time.time() - start_time
-            message = f"Loaded {len(tokens)} tradeable tokens in {elapsed:.2f}s (shared cache)"
+            
+            # Check if this bot was the coordinator
+            stats = self.shared_manager.get_stats()
+            was_coordinator = (self.bot_name == stats.get('coordinator_bot'))
+            
+            if was_coordinator:
+                message = f"Loaded {len(tokens)} tradeable tokens in {elapsed:.2f}s (coordinated for all bots)"
+            else:
+                message = f"Received {len(tokens)} tradeable tokens in {elapsed:.2f}s (from coordinator)"
             
             if self.logger:
                 self.logger.success(message)
-            else:
-                print(f"🤖 TVB: ✅ {self.bot_name}: {message}")
             
             return tokens
             
@@ -337,8 +446,6 @@ class OptimizedTokenLoader:
             error_msg = f"Token loading error: {e}"
             if self.logger:
                 self.logger.error(error_msg)
-            else:
-                print(f"🤖 TVB: ❌ {self.bot_name}: {error_msg}")
             return []
     
     def force_refresh(self):
@@ -356,10 +463,10 @@ class OptimizedTokenLoader:
 
 # Example usage
 if __name__ == "__main__":
-    # Test the shared manager
+    # Test the FIXED shared manager
     manager = SharedTokenManager()
     
-    print("🤖 TVB: 🧪 Testing Shared Token Manager...")
+    print("🤖 TVB: 🧪 Testing FIXED Shared Token Manager...")
     
     # Simulate multiple bots
     for i in range(3):
@@ -370,4 +477,4 @@ if __name__ == "__main__":
     # Print stats
     manager.print_stats()
     
-    print("🤖 TVB: ✅ Shared Token Manager test complete!")
+    print("🤖 TVB: ✅ FIXED Shared Token Manager test complete!")

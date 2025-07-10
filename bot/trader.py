@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Enhanced Trading execution logic with comprehensive debugging and token creation
+Enhanced Trading execution logic with Web3.py compatibility fix and comprehensive debugging
 """
 
 import random
@@ -8,7 +8,7 @@ from web3 import Web3
 from bot.token_creator import TokenCreator
 
 class TokenTrader:
-    """Handles all trading operations with comprehensive debugging and token creation"""
+    """Handles all trading operations with Web3.py compatibility fixes"""
     
     def __init__(self, w3, account, factory_contract, config, webhook_manager=None, verbose=False, logger=None):
         self.w3 = w3
@@ -45,6 +45,30 @@ class TokenTrader:
         
         if self.verbose and self.logger:
             self.logger.info(f"💹 Trader initialized with buy bias: {self.buy_bias:.2f}, risk: {self.risk_tolerance:.2f}")
+    
+    def _send_raw_transaction_safe(self, signed_txn):
+        """Safely send raw transaction with Web3.py version compatibility"""
+        try:
+            # Handle different Web3.py versions
+            if hasattr(signed_txn, 'rawTransaction'):
+                # Newer versions use rawTransaction
+                raw_transaction = signed_txn.rawTransaction
+            elif hasattr(signed_txn, 'raw_transaction'):
+                # Some versions use raw_transaction
+                raw_transaction = signed_txn.raw_transaction
+            else:
+                # Fallback - the signed transaction might be the raw data itself
+                raw_transaction = signed_txn
+            
+            return self.w3.eth.send_raw_transaction(raw_transaction)
+            
+        except Exception as e:
+            self._debug_log(f"❌ Raw transaction send error: {e}")
+            # Try alternative method
+            try:
+                return self.w3.eth.send_raw_transaction(signed_txn)
+            except Exception as e2:
+                raise Exception(f"Failed to send transaction with both methods: {e}, {e2}")
     
     def execute_trade_decision(self, token):
         """Make and execute a trading decision for the given token"""
@@ -97,7 +121,7 @@ class TokenTrader:
                 else:
                     self._debug_log(f"❌ Insufficient AVAX ({current_avax:.4f}) and no {token_symbol} to sell")
                     
-                    # Send webhook for insufficient funds
+                    # Send webhook for insufficient funds (this won't be logged as ERROR now)
                     if self.webhook:
                         self.webhook.send_update("insufficient_funds", {
                             "message": f"Insufficient AVAX ({current_avax:.4f}) for trading",
@@ -148,7 +172,7 @@ class TokenTrader:
             return False
     
     def _execute_buy(self, token_info):
-        """Execute a buy transaction with comprehensive debugging"""
+        """Execute a buy transaction with Web3.py compatibility fixes"""
         token_address = token_info['address']
         token_symbol = token_info['symbol']
         
@@ -183,7 +207,7 @@ class TokenTrader:
             
             self._debug_log(f"📋 Transaction params - Nonce: {nonce}, Gas Price: {gas_price}")
             
-            # Build transaction (NEW: includes minTokensOut parameter)
+            # Build transaction (includes minTokensOut parameter)
             txn = self.factory_contract.functions.buy(
                 self.w3.to_checksum_address(token_address),
                 0  # minTokensOut = 0 (no slippage protection)
@@ -198,12 +222,12 @@ class TokenTrader:
             
             self._debug_log(f"📝 Transaction built - Gas: {txn['gas']}, Value: {amount_to_buy:.6f} AVAX")
             
-            # Sign and send
+            # Sign and send with compatibility fix
             self._debug_log("🔐 Signing transaction...")
             signed_txn = self.account.sign_transaction(txn)
             
             self._debug_log("📡 Sending transaction...")
-            tx_hash = self.w3.eth.send_raw_transaction(signed_txn.raw_transaction)
+            tx_hash = self._send_raw_transaction_safe(signed_txn)
             tx_hash_hex = self.w3.to_hex(tx_hash)
             
             self._debug_log(f"✅ Transaction sent! Hash: {tx_hash_hex}")
@@ -241,15 +265,6 @@ class TokenTrader:
                     if hasattr(receipt, 'logs') and len(receipt.logs) == 0:
                         error_msg += " | Transaction reverted (no logs - likely contract revert)"
                     
-                    # Try to get revert reason (if available)
-                    try:
-                        # This might not work on all networks, but worth trying
-                        revert_reason = self.w3.eth.call(tx_details, receipt.blockNumber)
-                        if revert_reason:
-                            error_msg += f" | Revert reason: {revert_reason}"
-                    except:
-                        pass
-                        
                 except Exception as debug_error:
                     error_msg += f" | Debug error: {debug_error}"
                 
@@ -270,7 +285,7 @@ class TokenTrader:
             return False
     
     def _execute_sell(self, token_info, token_balance, forced=False):
-        """Execute a sell transaction with comprehensive debugging"""
+        """Execute a sell transaction with Web3.py compatibility fixes"""
         token_address = token_info['address']
         token_symbol = token_info['symbol']
         
@@ -319,12 +334,12 @@ class TokenTrader:
             
             self._debug_log(f"📝 Transaction built - Gas: {txn['gas']}, Amount: {amount_to_sell}")
             
-            # Sign and send
+            # Sign and send with compatibility fix
             self._debug_log("🔐 Signing transaction...")
             signed_txn = self.account.sign_transaction(txn)
             
             self._debug_log("📡 Sending transaction...")
-            tx_hash = self.w3.eth.send_raw_transaction(signed_txn.raw_transaction)
+            tx_hash = self._send_raw_transaction_safe(signed_txn)
             tx_hash_hex = self.w3.to_hex(tx_hash)
             
             self._debug_log(f"✅ Transaction sent! Hash: {tx_hash_hex}")
@@ -413,7 +428,7 @@ class TokenTrader:
             
             self._debug_log(f"🎨 Creating token: {concept['name']} (${concept['symbol']}) {concept['image_emoji']}")
             
-            # Create token on-chain
+            # Create token on-chain with compatibility fix
             success, result = self.token_creator.create_token_on_chain(
                 w3=self.w3,
                 factory_contract=self.factory_contract,
@@ -560,7 +575,7 @@ class TokenTrader:
 
 # Example usage and testing
 if __name__ == "__main__":
-    print("🤖 TVB: Enhanced trading module with comprehensive debugging and token creation loaded!")
+    print("🤖 TVB: Fixed trading module with Web3.py compatibility loaded!")
     
     # Example personality test
     test_config = {
@@ -573,4 +588,4 @@ if __name__ == "__main__":
     }
     
     print(f"🤖 TVB: Test config - Buy bias: {test_config['buyBias']}, Risk: {test_config['riskTolerance']}")
-    print("🤖 TVB: ✅ Enhanced trading module test complete!")
+    print("🤖 TVB: ✅ Fixed trading module test complete!")
