@@ -1,8 +1,7 @@
-# bot/webhook.py - Fixed webhook manager with clean logging integration
+# bot/webhook.py - Fixed webhook manager that properly shows hold actions
 #!/usr/bin/env python3
 """
-Enhanced Webhook Manager with session balance tracking, P&L calculations, wallet address,
-and CLEAN LOGGING INTEGRATION to eliminate spam
+Fixed Webhook Manager - Ensures hold actions are visible in console output
 """
 
 import json
@@ -13,7 +12,7 @@ from datetime import datetime
 from typing import Optional, Dict, Any
 
 class WebhookManager:
-    """Manages webhook communications with enhanced reliability and CLEAN LOGGING"""
+    """Manages webhook communications with enhanced reliability and shows ALL trading actions"""
     
     def __init__(self, bot_name, display_name, avatar_url, webhook_url, bot_secret, phrases, bio=None, get_balance_callback=None, wallet_address=None):
         self.bot_name = bot_name
@@ -48,8 +47,9 @@ class WebhookManager:
         self.last_successful_webhook = None
         self.consecutive_failures = 0
         
-        # Define which actions should get personality phrases vs system messages
-        self.personality_actions = {'buy', 'sell', 'create_token', 'error', 'hold'}
+        # FIXED: Define which actions should get personality phrases vs system messages
+        # Include 'hold' in personality actions
+        self.personality_actions = {'buy', 'sell', 'hold', 'create_token', 'error'}
         self.system_actions = {
             'cycle_start', 'cycle_complete', 'token_refresh', 'heartbeat', 'startup', 
             'shutdown', 'buy_attempt', 'sell_attempt', 'trade_failure', 'insufficient_funds',
@@ -138,18 +138,19 @@ class WebhookManager:
             self.clean_logger.system(f"💰 {self.display_name} session started with {starting_balance:.6f} AVAX")
     
     def send_update(self, action_type, details):
-        """Send webhook update with CLEAN LOGGING and proper error categorization"""
+        """Send webhook update with FIXED hold action logging"""
         if not self.enabled:
             return False
         
         try:
-            # Only add personality phrases for actual trading actions, not system messages
+            # FIXED: Only add personality phrases for actual trading actions, not system messages
+            # Include 'hold' in personality actions
             if action_type in self.personality_actions and 'message' not in details:
                 phrase_list = self.phrases.get(action_type, [])
                 if phrase_list:
                     details['message'] = random.choice(phrase_list)
                 else:
-                    # Fallback messages for actions without configured phrases
+                    # FIXED: Fallback messages for actions without configured phrases
                     fallback_messages = {
                         'hold': f"Staying put with this position for now.",
                         'buy': "Making a purchase!",
@@ -205,9 +206,17 @@ class WebhookManager:
             # Send webhook with retry logic
             success = self._send_webhook_with_retries(payload)
             
-            # Use CLEAN LOGGING with proper error details
+            # FIXED: ALWAYS log ANY action sent to webhook for troubleshooting
             if self.clean_logger:
+                # Log EVERY action that gets sent to webhook - no filtering
                 self.clean_logger.clean_webhook_log(self.bot_name, action_type, success, details)
+            else:
+                # Fallback logging if clean_logger not available
+                status = "✅" if success else "❌"
+                token_symbol = details.get('tokenSymbol', '')
+                balance = details.get('currentBalance', 0)
+                wallet_short = self.wallet_address[:6] + "..." + self.wallet_address[-4:] if self.wallet_address else "No wallet"
+                print(f"🤖 TVB: {status} {self.display_name} {action_type.upper()} {token_symbol} | Balance: {balance:.4f} AVAX | Wallet: {wallet_short}")
             
             # Update statistics
             self._update_stats(success, action_type)

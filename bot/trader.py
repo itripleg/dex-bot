@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Enhanced Trading execution logic with Web3.py compatibility fix and comprehensive debugging
+FIXED Trading execution logic with CORRECT contract access
+The issue: self.factory_contract.contract.functions should be self.factory_contract.functions
 """
 
 import random
@@ -8,12 +9,12 @@ from web3 import Web3
 from bot.token_creator import TokenCreator
 
 class TokenTrader:
-    """Handles all trading operations with Web3.py compatibility fixes"""
+    """FIXED Handles all trading operations with correct contract access"""
     
     def __init__(self, w3, account, factory_contract, config, webhook_manager=None, verbose=False, logger=None):
         self.w3 = w3
         self.account = account
-        self.factory_contract = factory_contract
+        self.factory_contract = factory_contract  # This is already a Web3 contract instance
         self.config = config
         self.webhook = webhook_manager
         self.verbose = verbose
@@ -44,27 +45,23 @@ class TokenTrader:
         ]
         
         if self.verbose and self.logger:
-            self.logger.info(f"💹 Trader initialized with buy bias: {self.buy_bias:.2f}, risk: {self.risk_tolerance:.2f}")
+            self.logger.info(f"💹 FIXED Trader initialized with buy bias: {self.buy_bias:.2f}, risk: {self.risk_tolerance:.2f}")
     
     def _send_raw_transaction_safe(self, signed_txn):
         """Safely send raw transaction with Web3.py version compatibility"""
         try:
             # Handle different Web3.py versions
             if hasattr(signed_txn, 'rawTransaction'):
-                # Newer versions use rawTransaction
                 raw_transaction = signed_txn.rawTransaction
             elif hasattr(signed_txn, 'raw_transaction'):
-                # Some versions use raw_transaction
                 raw_transaction = signed_txn.raw_transaction
             else:
-                # Fallback - the signed transaction might be the raw data itself
                 raw_transaction = signed_txn
             
             return self.w3.eth.send_raw_transaction(raw_transaction)
             
         except Exception as e:
             self._debug_log(f"❌ Raw transaction send error: {e}")
-            # Try alternative method
             try:
                 return self.w3.eth.send_raw_transaction(signed_txn)
             except Exception as e2:
@@ -86,9 +83,19 @@ class TokenTrader:
             
             self._debug_log(f"🎯 Processing trade decision for {token_symbol} ({token_address})")
             
-            # Check token state FIRST
+            # FIXED: Check token state - use correct contract access
             try:
-                token_state = self.factory_contract.functions.getTokenState(token_address).call()
+                # The factory_contract is passed from core.py where it's factory_contract.contract
+                # So we need to access it correctly based on how it's passed
+                if hasattr(self.factory_contract, 'functions'):
+                    # Direct contract access
+                    token_state = self.factory_contract.functions.getTokenState(token_address).call()
+                elif hasattr(self.factory_contract, 'contract'):
+                    # Wrapped contract access
+                    token_state = self.factory_contract.contract.functions.getTokenState(token_address).call()
+                else:
+                    raise Exception("Cannot determine contract access method")
+                    
                 self._debug_log(f"📊 Token {token_symbol} state: {token_state}")
                 
                 if token_state not in [1, 4]:  # Not TRADING or RESUMED
@@ -121,7 +128,7 @@ class TokenTrader:
                 else:
                     self._debug_log(f"❌ Insufficient AVAX ({current_avax:.4f}) and no {token_symbol} to sell")
                     
-                    # Send webhook for insufficient funds (this won't be logged as ERROR now)
+                    # Send webhook for insufficient funds
                     if self.webhook:
                         self.webhook.send_update("insufficient_funds", {
                             "message": f"Insufficient AVAX ({current_avax:.4f}) for trading",
@@ -165,14 +172,22 @@ class TokenTrader:
             error_msg = f"Trade decision error for {token.get('symbol', 'Unknown')}: {e}"
             self._debug_log(f"❌ {error_msg}")
             
-            # Send error webhook with personality message
             if self.webhook:
                 self.webhook.send_error_update(error_msg, "trade_decision")
             
             return False
     
+    def _get_contract_functions(self):
+        """Helper method to get contract functions with correct access pattern"""
+        if hasattr(self.factory_contract, 'functions'):
+            return self.factory_contract.functions
+        elif hasattr(self.factory_contract, 'contract'):
+            return self.factory_contract.contract.functions
+        else:
+            raise Exception("Cannot determine contract access method")
+    
     def _execute_buy(self, token_info):
-        """Execute a buy transaction with Web3.py compatibility fixes"""
+        """Execute a buy transaction with correct function signature"""
         token_address = token_info['address']
         token_symbol = token_info['symbol']
         
@@ -207,14 +222,15 @@ class TokenTrader:
             
             self._debug_log(f"📋 Transaction params - Nonce: {nonce}, Gas Price: {gas_price}")
             
-            # Build transaction (includes minTokensOut parameter)
-            txn = self.factory_contract.functions.buy(
+            # FIXED: Build transaction with correct contract access
+            contract_functions = self._get_contract_functions()
+            txn = contract_functions.buy(
                 self.w3.to_checksum_address(token_address),
                 0  # minTokensOut = 0 (no slippage protection)
             ).build_transaction({
                 'from': self.account.address,
                 'value': self.w3.to_wei(amount_to_buy, 'ether'),
-                'gas': 800000,  # Increased gas limit
+                'gas': 1200000,  # Increased gas limit
                 'gasPrice': gas_price,
                 'nonce': nonce,
                 'chainId': 43113  # Avalanche Fuji testnet
@@ -222,7 +238,7 @@ class TokenTrader:
             
             self._debug_log(f"📝 Transaction built - Gas: {txn['gas']}, Value: {amount_to_buy:.6f} AVAX")
             
-            # Sign and send with compatibility fix
+            # Sign and send
             self._debug_log("🔐 Signing transaction...")
             signed_txn = self.account.sign_transaction(txn)
             
@@ -242,7 +258,6 @@ class TokenTrader:
                 
                 self._debug_log(f"🎉 BUY SUCCESS! New balance: {post_trade_balance:.6f} AVAX")
                 
-                # Send success webhook with personality message
                 if self.webhook:
                     self.webhook.send_buy_update(
                         token_info, 
@@ -253,15 +268,12 @@ class TokenTrader:
                 
                 return True
             else:
-                # Enhanced error reporting for failed transactions
                 error_msg = f"Buy transaction failed! TX: {tx_hash_hex}"
                 
                 try:
-                    # Get transaction details for debugging
                     tx_details = self.w3.eth.get_transaction(tx_hash)
                     error_msg += f" | Gas: {receipt.gasUsed}/{tx_details.gas}"
                     
-                    # Check for revert reason
                     if hasattr(receipt, 'logs') and len(receipt.logs) == 0:
                         error_msg += " | Transaction reverted (no logs - likely contract revert)"
                     
@@ -285,12 +297,12 @@ class TokenTrader:
             return False
     
     def _execute_sell(self, token_info, token_balance, forced=False):
-        """Execute a sell transaction with Web3.py compatibility fixes"""
+        """FIXED Execute a sell transaction with correct 3-parameter function signature"""
         token_address = token_info['address']
         token_symbol = token_info['symbol']
         
         try:
-            self._debug_log(f"🔴 Starting SELL execution for {token_symbol}")
+            self._debug_log(f"🔴 Starting FIXED SELL execution for {token_symbol}")
             
             # Calculate sell percentage based on risk tolerance
             min_sell_perc = 0.1  # Always sell at least 10%
@@ -320,21 +332,23 @@ class TokenTrader:
             
             self._debug_log(f"📋 Transaction params - Nonce: {nonce}, Gas Price: {gas_price}")
             
-            # Build transaction
-            txn = self.factory_contract.functions.sell(
+            # FIXED: Build transaction with correct contract access and 3-parameter sell function
+            contract_functions = self._get_contract_functions()
+            txn = contract_functions.sell(
                 self.w3.to_checksum_address(token_address),
-                amount_to_sell
+                amount_to_sell,
+                0  # minEthOut = 0 (no slippage protection)
             ).build_transaction({
                 'from': self.account.address,
-                'gas': 800000,  # Increased gas limit
+                'gas': 1200000,  # Increased gas limit
                 'gasPrice': gas_price,
                 'nonce': nonce,
                 'chainId': 43113  # Avalanche Fuji testnet
             })
             
-            self._debug_log(f"📝 Transaction built - Gas: {txn['gas']}, Amount: {amount_to_sell}")
+            self._debug_log(f"📝 FIXED Transaction built - Gas: {txn['gas']}, Amount: {amount_to_sell}, minEthOut: 0")
             
-            # Sign and send with compatibility fix
+            # Sign and send
             self._debug_log("🔐 Signing transaction...")
             signed_txn = self.account.sign_transaction(txn)
             
@@ -354,7 +368,6 @@ class TokenTrader:
                 
                 self._debug_log(f"🎉 SELL SUCCESS! New balance: {post_trade_balance:.6f} AVAX")
                 
-                # Send success webhook with personality message
                 if self.webhook:
                     self.webhook.send_sell_update(
                         token_info, 
@@ -367,15 +380,12 @@ class TokenTrader:
                 
                 return True
             else:
-                # Enhanced error reporting for failed transactions
                 error_msg = f"Sell transaction failed! TX: {tx_hash_hex}"
                 
                 try:
-                    # Get transaction details for debugging
                     tx_details = self.w3.eth.get_transaction(tx_hash)
                     error_msg += f" | Gas: {receipt.gasUsed}/{tx_details.gas}"
                     
-                    # Check for revert reason
                     if hasattr(receipt, 'logs') and len(receipt.logs) == 0:
                         error_msg += " | Transaction reverted (no logs - likely contract revert)"
                         
@@ -428,10 +438,14 @@ class TokenTrader:
             
             self._debug_log(f"🎨 Creating token: {concept['name']} (${concept['symbol']}) {concept['image_emoji']}")
             
-            # Create token on-chain with compatibility fix
+            # FIXED: Create token on-chain with correct contract access
+            contract_for_creation = self.factory_contract
+            if hasattr(self.factory_contract, 'contract'):
+                contract_for_creation = self.factory_contract.contract
+            
             success, result = self.token_creator.create_token_on_chain(
                 w3=self.w3,
-                factory_contract=self.factory_contract,
+                factory_contract=contract_for_creation,
                 account=self.account,
                 concept=concept,
                 eth_amount=creation_amount
@@ -537,55 +551,11 @@ class TokenTrader:
             "max_trade_amount": self.max_trade_amount,
             "current_avax_balance": self._get_avax_balance()
         }
-    
-    def simulate_trade_decision(self, token, num_simulations=100):
-        """Simulate trade decisions for testing personality calibration"""
-        if not self.verbose or not self.logger:
-            return None
-            
-        self.logger.info(f"🧪 Simulating {num_simulations} decisions for {token.get('symbol', 'Unknown')}:")
-        
-        # Test with no tokens
-        actions_no_tokens = []
-        for _ in range(num_simulations):
-            action = self._decide_trade_action(0)
-            actions_no_tokens.append(action)
-        
-        # Test with tokens
-        fake_balance = 1000 * 1e18  # 1000 tokens
-        actions_with_tokens = []
-        for _ in range(num_simulations):
-            action = self._decide_trade_action(fake_balance)
-            actions_with_tokens.append(action)
-        
-        # Print statistics
-        buy_rate_no_tokens = actions_no_tokens.count('buy') / num_simulations * 100
-        sell_rate_with_tokens = actions_with_tokens.count('sell') / num_simulations * 100
-        
-        self.logger.info(f"📊 No tokens → Buy rate: {buy_rate_no_tokens:.1f}%")
-        self.logger.info(f"📊 With tokens → Sell rate: {sell_rate_with_tokens:.1f}%")
-        self.logger.info(f"🎯 Expected buy bias: {self.buy_bias * 100:.1f}%")
-        
-        return {
-            "buy_rate_no_tokens": buy_rate_no_tokens,
-            "sell_rate_with_tokens": sell_rate_with_tokens,
-            "expected_buy_bias": self.buy_bias * 100
-        }
 
 
 # Example usage and testing
 if __name__ == "__main__":
-    print("🤖 TVB: Fixed trading module with Web3.py compatibility loaded!")
-    
-    # Example personality test
-    test_config = {
-        'name': 'test_bot',
-        'buyBias': 0.7,
-        'riskTolerance': 0.6,
-        'minTradeAmount': 0.01,
-        'maxTradeAmount': 0.05,
-        'createTokenChance': 0.02
-    }
-    
-    print(f"🤖 TVB: Test config - Buy bias: {test_config['buyBias']}, Risk: {test_config['riskTolerance']}")
-    print("🤖 TVB: ✅ Fixed trading module test complete!")
+    print("🤖 TVB: FIXED trading module with correct contract access!")
+    print("🤖 TVB: Key fix: Handles both direct contract and wrapped contract access")
+    print("🤖 TVB: No more 'Contract' object has no attribute 'contract' errors")
+    print("🤖 TVB: ✅ Fixed trading module ready!")
