@@ -224,30 +224,6 @@ class SimpleWebhookManager:
         payload = self._build_base_payload("shutdown", details)
         return self._send_webhook(payload)
     
-    def send_offline(self, total_cycles: int, current_balance: float, reason: str = "shutdown") -> bool:
-        """Send offline notification to immediately mark bot as offline"""
-        details = {
-            "message": f"{self.display_name} has gone offline",
-            "totalCycles": total_cycles,
-            "currentBalance": current_balance,
-            "reason": reason,
-            "walletAddress": self.wallet_address,
-            "offline": True
-        }
-        
-        # Calculate P&L if we have starting balance
-        if self.starting_balance is not None:
-            pnl_amount = current_balance - self.starting_balance
-            pnl_percentage = (pnl_amount / self.starting_balance * 100) if self.starting_balance > 0 else 0
-            details.update({
-                "startingBalance": self.starting_balance,
-                "pnlAmount": pnl_amount,
-                "pnlPercentage": pnl_percentage
-            })
-        
-        payload = self._build_base_payload("offline", details)
-        return self._send_webhook(payload)
-    
     # UTILITY METHODS
     
     def get_success_rate(self) -> float:

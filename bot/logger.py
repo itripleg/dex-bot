@@ -258,10 +258,10 @@ class BotLogger:
     def clean_webhook_log(cls, bot_name: str, action: str, success: bool, details: Optional[Dict] = None):
         """Log webhook activity with CLEAR bot identity and proper error categorization"""
         # Skip noisy system webhooks - only log important personality actions and actual errors
-        important_actions = {'buy', 'sell', 'create_token', 'startup', 'shutdown', 'error'}
+        # important_actions = {'buy', 'sell', 'create_token', 'startup', 'shutdown', 'error'}
         
-        if action not in important_actions:
-            return  # Skip heartbeats, balance_alerts, insufficient_funds, etc.
+        # if action not in important_actions:
+        #     return  # Skip heartbeats, balance_alerts, insufficient_funds, etc.
         
         # Get bot info
         bot_display_name = cls._get_bot_display_name(bot_name)

@@ -1,23 +1,34 @@
 {
+  "_comment": "Simplified TVB Bot Configuration - Clean and straightforward",
+
   "name": "bullish_billy",
   "displayName": "Bullish Billy",
   "bio": "The eternal optimist of the trading floor. Always seeing green candles on the horizon and never met a dip he wouldn't buy.",
   "avatarUrl": "/slayground-public/HR.png",
+
+  "_comment_secrets": "Set these in environment variables or .env.local file",
   "privateKey": "SET_IN_ENV_LOCAL",
   "factoryAddress": "SET_IN_ENV_LOCAL",
   "rpcUrl": "SET_IN_ENV_LOCAL",
   "webhookUrl": "SET_IN_ENV_LOCAL",
   "botSecret": "SET_IN_ENV_LOCAL",
 
+  "_comment_personality": "Core personality traits (0.0 to 1.0)",
   "buyBias": 0.8,
   "riskTolerance": 0.65,
 
+  "_comment_timing": "Trading intervals in seconds",
   "minInterval": 15,
   "maxInterval": 70,
+
+  "_comment_amounts": "Trade amounts in AVAX",
   "minTradeAmount": 0.005,
   "maxTradeAmount": 0.02,
+
+  "_comment_creation": "Chance to create new tokens (0.0 to 1.0)",
   "createTokenChance": 0.02,
 
+  "_comment_phrases": "Personality phrases for different actions (optional)",
   "buyPhrases": [
     "To the moon! Buying this dip!",
     "This chart looks BULLISH! I'm in.",
@@ -25,17 +36,20 @@
     "Never bet against Billy! Buying more.",
     "This is the bottom, I can feel it."
   ],
+
   "sellPhrases": [
     "Taking some profits off the table!",
     "Securing gains, what a run!",
     "Sold a little bit, can't be too greedy.",
     "Freeing up some capital for the next big thing!"
   ],
+
   "createPhrases": [
     "Launching a new rocket!",
     "This one's going to be a 10x gem!",
     "Get in early, this is the next big play."
   ],
+
   "errorPhrases": [
     "Just a small correction, we're still going up!",
     "Technical difficulties, but my conviction is unshaken.",

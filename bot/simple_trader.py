@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-SIMPLIFIED Trader - Clean trading logic that works with simplified webhook
-Removes complexity and focuses on core trading actions
+bot/simple_trader.py - Real trader implementation
+Save this as bot/simple_trader.py
 """
 
 import random
@@ -10,12 +10,13 @@ from web3 import Web3
 class SimpleTrader:
     """Simplified trader with clean, consistent logic"""
     
-    def __init__(self, w3, account, factory_contract, config, webhook_manager=None):
+    def __init__(self, w3, account, factory_contract, config, webhook_manager=None, bot_logger=None):
         self.w3 = w3
         self.account = account
         self.factory_contract = factory_contract
         self.config = config
         self.webhook = webhook_manager
+        self.bot_logger = bot_logger
         
         # Trading parameters
         self.buy_bias = config.get('buyBias', 0.6)
@@ -34,7 +35,14 @@ class SimpleTrader:
             }
         ]
         
-        print(f"🤖 Trader initialized: Buy Bias={self.buy_bias:.2f}, Risk={self.risk_tolerance:.2f}")
+        self.log(f"🤖 Trader initialized: Buy Bias={self.buy_bias:.2f}, Risk={self.risk_tolerance:.2f}")
+    
+    def log(self, message: str):
+        """Log with bot-specific colors if available"""
+        if self.bot_logger:
+            self.bot_logger.log(message)
+        else:
+            print(message)
     
     def get_avax_balance(self) -> float:
         """Get current AVAX balance"""
@@ -42,7 +50,7 @@ class SimpleTrader:
             balance_wei = self.w3.eth.get_balance(self.account.address)
             return float(self.w3.from_wei(balance_wei, 'ether'))
         except Exception as e:
-            print(f"❌ Error getting AVAX balance: {e}")
+            self.log(f"❌ Error getting AVAX balance: {e}")
             return 0.0
     
     def get_token_balance(self, token_address: str) -> int:
@@ -54,7 +62,7 @@ class SimpleTrader:
             )
             return token_contract.functions.balanceOf(self.account.address).call()
         except Exception as e:
-            print(f"❌ Error getting token balance: {e}")
+            self.log(f"❌ Error getting token balance: {e}")
             return 0
     
     def check_token_state(self, token_address: str) -> bool:
@@ -63,7 +71,7 @@ class SimpleTrader:
             state = self.factory_contract.functions.getTokenState(token_address).call()
             return state in [1, 4]  # TRADING or RESUMED
         except Exception as e:
-            print(f"❌ Error checking token state: {e}")
+            self.log(f"❌ Error checking token state: {e}")
             return False
     
     def decide_action(self, token_balance: int) -> str:
@@ -87,7 +95,7 @@ class SimpleTrader:
     def execute_buy(self, token_address: str, token_symbol: str, token_name: str) -> bool:
         """Execute a buy transaction"""
         try:
-            print(f"🟢 Executing BUY for {token_symbol}")
+            self.log(f"🟢 Executing BUY for {token_symbol}")
             
             # Calculate amount to buy
             current_avax = self.get_avax_balance()
@@ -96,12 +104,12 @@ class SimpleTrader:
             
             if amount_to_buy < self.min_trade_amount:
                 error_msg = f"Insufficient AVAX for trade ({current_avax:.4f} available)"
-                print(f"❌ {error_msg}")
+                self.log(f"❌ {error_msg}")
                 if self.webhook:
                     self.webhook.send_error(error_msg, "insufficient_funds", current_avax)
                 return False
             
-            print(f"💰 Buying {amount_to_buy:.6f} AVAX worth of {token_symbol}")
+            self.log(f"💰 Buying {amount_to_buy:.6f} AVAX worth of {token_symbol}")
             
             # Build transaction
             nonce = self.w3.eth.get_transaction_count(self.account.address)
@@ -119,7 +127,16 @@ class SimpleTrader:
             
             # Sign and send
             signed_txn = self.account.sign_transaction(txn)
-            tx_hash = self.w3.eth.send_raw_transaction(signed_txn.raw_transaction)
+            
+            # Handle different Web3.py versions
+            if hasattr(signed_txn, 'rawTransaction'):
+                raw_transaction = signed_txn.rawTransaction
+            elif hasattr(signed_txn, 'raw_transaction'):
+                raw_transaction = signed_txn.raw_transaction
+            else:
+                raw_transaction = signed_txn
+            
+            tx_hash = self.w3.eth.send_raw_transaction(raw_transaction)
             tx_hash_hex = self.w3.to_hex(tx_hash)
             
             print(f"📡 Transaction sent: {tx_hash_hex}")
@@ -185,7 +202,16 @@ class SimpleTrader:
             
             # Sign and send
             signed_txn = self.account.sign_transaction(txn)
-            tx_hash = self.w3.eth.send_raw_transaction(signed_txn.raw_transaction)
+            
+            # Handle different Web3.py versions
+            if hasattr(signed_txn, 'rawTransaction'):
+                raw_transaction = signed_txn.rawTransaction
+            elif hasattr(signed_txn, 'raw_transaction'):
+                raw_transaction = signed_txn.raw_transaction
+            else:
+                raw_transaction = signed_txn
+            
+            tx_hash = self.w3.eth.send_raw_transaction(raw_transaction)
             tx_hash_hex = self.w3.to_hex(tx_hash)
             
             print(f"📡 Transaction sent: {tx_hash_hex}")
@@ -311,13 +337,3 @@ class SimpleTrader:
             if self.webhook:
                 self.webhook.send_error(error_msg, "token_creation")
             return False
-
-
-# Example usage
-if __name__ == "__main__":
-    print("🤖 Simplified Trader loaded!")
-    print("✅ Key features:")
-    print("  - Clean buy/sell/hold logic")
-    print("  - Consistent error handling")
-    print("  - Simplified webhook integration")
-    print("  - No complex state management")
