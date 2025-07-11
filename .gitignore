@@ -1,6 +1,29 @@
+# This will replace your current .gitignore with a comprehensive one
+@"
 # TVB Bot Environment Files
 .env.local
 .env.production
 *.private
 *_cache.json
 logs/
+
+# Python cache and compiled files
+__pycache__/
+*.py[cod]
+*`$py.class
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+
+# IDEs
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+"@ | Out-File -FilePath .gitignore -Encoding UTF8
