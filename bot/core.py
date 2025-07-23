@@ -1,8 +1,8 @@
-# bot/core.py - Fixed core bot with improved error handling and stability
+# bot/core.py - OPTIMIZED core bot with reduced webhook calls and better stability
 #!/usr/bin/env python3
 """
-Core bot orchestration with improved error handling and connection stability
-Fixed to prevent all bots from stopping due to unhandled exceptions
+OPTIMIZED Core bot orchestration with minimal webhook overhead and improved stability
+Dramatically reduced webhook traffic while maintaining full functionality
 """
 
 import time
@@ -24,21 +24,20 @@ import requests
 from requests.exceptions import RequestException, Timeout, ConnectionError
 
 from bot.config import get_private_key, merge_config_with_defaults, print_config_summary
-from bot.cache import TokenCache  # Keep for backwards compatibility if needed
 from bot.trader import TokenTrader
-from bot.webhook import WebhookManager
+from bot.webhook import OptimizedWebhookManager  # Use optimized webhook manager
 from bot.logger import BotLogger
 from contracts.factory import FactoryContract
 from contracts.token import TokenContract
 from shared.token_manager import OptimizedTokenLoader
 
-class TransparentVolumeBot:
+class OptimizedTransparentVolumeBot:
     """
-    Main bot orchestration class with enhanced error handling and stability
+    OPTIMIZED main bot orchestration class with minimal webhook overhead
     """
     
     def __init__(self, config, private_key_override=None, force_cache_refresh=False, verbose=False):
-        """Initialize the bot with modular components and robust error handling"""
+        """Initialize the bot with optimized webhook and reduced API calls"""
         try:
             # Store configuration
             self.config = merge_config_with_defaults(config)
@@ -50,18 +49,26 @@ class TransparentVolumeBot:
             
             # Initialize bot-specific logger
             self.logger = BotLogger(self.bot_name, self.display_name)
-            self.logger.info("🚀 Initializing Transparent Volume Bot...")
+            self.logger.info("🚀 Initializing OPTIMIZED Transparent Volume Bot...")
             
             print_config_summary(self.config)
             
-            # Error tracking
+            # OPTIMIZATION: Enhanced error tracking with adaptive behavior
             self.consecutive_errors = 0
             self.max_consecutive_errors = 5
             self.last_successful_action = time.time()
-            self.connection_check_interval = 30  # Check connection every 30 seconds
+            self.connection_check_interval = 60  # Reduced frequency: every 60 seconds
             self.last_connection_check = 0
+            self.error_backoff_multiplier = 1.0  # Adaptive error handling
             
-            # Initialize Web3 and account FIRST (we need the wallet address)
+            # OPTIMIZATION: Cycle timing with adaptive intervals
+            self.base_min_interval = self.config.get('minInterval', 15)
+            self.base_max_interval = self.config.get('maxInterval', 60)
+            self.current_min_interval = self.base_min_interval
+            self.current_max_interval = self.base_max_interval
+            self.last_successful_trade_time = time.time()
+            
+            # Initialize Web3 and account FIRST
             self._setup_web3_and_account(private_key_override)
             
             # Initialize contract interfaces
@@ -74,8 +81,8 @@ class TransparentVolumeBot:
             self.session_start_time = datetime.utcnow().isoformat() + "Z"
             self.starting_balance = self.get_avax_balance()
             
-            # Initialize webhook manager with balance callback, bio, AND WALLET ADDRESS
-            self.webhook = WebhookManager(
+            # OPTIMIZATION: Initialize OPTIMIZED webhook manager
+            self.webhook = OptimizedWebhookManager(
                 bot_name=self.bot_name,
                 display_name=self.display_name,
                 avatar_url=self.config.get('avatarUrl', ''),
@@ -84,13 +91,13 @@ class TransparentVolumeBot:
                 phrases=self._extract_personality_phrases(),
                 bio=self.config.get('bio'),
                 get_balance_callback=self.get_avax_balance,
-                wallet_address=self.account.address  # PASS WALLET ADDRESS HERE
+                wallet_address=self.account.address
             )
             
             # Set session start in webhook manager
             self.webhook.set_session_start(self.starting_balance, self.session_start_time)
             
-            # Initialize trader with webhook manager
+            # Initialize trader with optimized webhook manager
             self.trader = TokenTrader(
                 w3=self.w3,
                 account=self.account,
@@ -106,15 +113,22 @@ class TransparentVolumeBot:
             self.is_running = False
             self.shutdown_requested = False
             
+            # OPTIMIZATION: Performance tracking
+            self.cycle_count = 0
+            self.successful_trades = 0
+            self.failed_trades = 0
+            self.tokens_refreshed = 0
+            
             # Load tokens using optimized system
             self._load_tokens()
             
-            # Send startup notification (now includes wallet address automatically)
+            # OPTIMIZATION: Send startup notification (automatic heartbeats will start)
             self._send_startup_notification()
             
-            print(f"🤖 TVB: ✅ Bot '{self.display_name}' initialized successfully!")
+            print(f"🤖 TVB: ✅ OPTIMIZED Bot '{self.display_name}' initialized successfully!")
             print(f"🤖 TVB: 💼 Wallet Address: {self.account.address}")
             print(f"🤖 TVB: 💰 Starting session with {self.starting_balance:.6f} AVAX")
+            print(f"🤖 TVB: 🚀 Optimization features: Smart heartbeats, Request batching, Adaptive intervals")
             
         except Exception as e:
             self.logger.error(f"Failed to initialize bot: {e}")
@@ -138,21 +152,17 @@ class TransparentVolumeBot:
                     else:
                         if attempt == max_retries - 1:
                             raise ConnectionError(f"Failed to connect to RPC after {max_retries} attempts: {self.rpc_url}")
-                        time.sleep(2 ** attempt)  # Exponential backoff
+                        time.sleep(2 ** attempt)
                 except Exception as e:
                     if attempt == max_retries - 1:
                         raise ConnectionError(f"Failed to connect to RPC: {self.rpc_url}, Error: {e}")
                     time.sleep(2 ** attempt)
             
-            # Setup account - pass bot name for environment lookup
+            # Setup account
             private_key = get_private_key(self.config, private_key_override, self.bot_name)
-            
             self.account = Account.from_key(private_key)
             
-            # Log wallet address prominently
-            print(f"🤖 TVB: 💼 Bot Wallet Address: {self.account.address}")
-            
-            # If the balance is 0 and we just generated a key, show funding instructions
+            # Check balance and show funding instructions if needed
             current_balance = self.get_avax_balance()
             if current_balance == 0:
                 print("\n🤖 TVB: ⚠️  WALLET NEEDS FUNDING!")
@@ -174,7 +184,6 @@ class TransparentVolumeBot:
     def _check_connection_health(self):
         """Check if Web3 connection is still healthy"""
         try:
-            # Simple connection test
             self.w3.eth.get_block_number()
             return True
         except Exception as e:
@@ -220,7 +229,6 @@ class TransparentVolumeBot:
         try:
             self.logger.info("🚀 Setting up optimized token loading (shared manager)...")
             
-            # Use optimized loader instead of old cache system
             self.token_loader = OptimizedTokenLoader(
                 bot_name=self.bot_name,
                 factory_contract=self.factory_contract.contract,
@@ -251,30 +259,37 @@ class TransparentVolumeBot:
         try:
             self.logger.info("🔍 Loading tradeable tokens via shared manager...")
             self.tokens = self.token_loader.load_tokens_optimized()
+            self.tokens_refreshed += 1
             self.logger.success(f"Loaded {len(self.tokens)} tradeable tokens")
         except Exception as e:
             self.logger.error(f"Failed to load tokens: {e}")
-            self.tokens = []  # Continue with empty list rather than crash
+            self.tokens = []
     
     def _send_startup_notification(self):
-        """Send enhanced startup notification with session balance and wallet address"""
+        """Send startup notification with session info"""
         try:
             startup_info = {
                 "message": f"{self.display_name} is now online and ready to trade!",
                 "sessionStarted": self.session_start_time,
                 "tokensFound": len(self.tokens),
-                "walletAddress": self.account.address,  # Include wallet address in startup
+                "walletAddress": self.account.address,
                 "config": {
                     "buyBias": self.config.get('buyBias', 0.6),
                     "riskTolerance": self.config.get('riskTolerance', 0.5),
                     "minTradeAmount": self.config.get('minTradeAmount', 0.005),
                     "maxTradeAmount": self.config.get('maxTradeAmount', 0.02),
                     "tradingRange": f"{self.config.get('minTradeAmount', 0.005):.4f}-{self.config.get('maxTradeAmount', 0.02):.4f} AVAX",
-                    "intervalRange": f"{self.config.get('minInterval', 15)}-{self.config.get('maxInterval', 60)}s"
+                    "intervalRange": f"{self.current_min_interval}-{self.current_max_interval}s"
                 },
                 "character": {
                     "mood": self._determine_bot_mood(),
                     "personality": self.config.get('name', '').replace('_', ' ').title()
+                },
+                "optimizationFeatures": {
+                    "smartHeartbeats": True,
+                    "requestBatching": True,
+                    "adaptiveIntervals": True,
+                    "sharedTokenManager": True
                 }
             }
             
@@ -282,7 +297,6 @@ class TransparentVolumeBot:
             
         except Exception as e:
             self.logger.error(f"Failed to send startup notification: {e}")
-            # Don't crash on webhook failure
     
     def _determine_bot_mood(self):
         """Determine bot mood based on config personality"""
@@ -317,11 +331,10 @@ class TransparentVolumeBot:
                 
                 self.logger.warning(f"Balance fetch attempt {attempt + 1} failed: {e}")
                 
-                # Try to reconnect if connection issue
                 if isinstance(e, ProviderConnectionError):
                     self._reconnect_if_needed()
                 
-                time.sleep(2 ** attempt)  # Exponential backoff
+                time.sleep(2 ** attempt)
             except Exception as e:
                 self.logger.error(f"Unexpected error getting balance: {e}")
                 return 0.0
@@ -337,17 +350,17 @@ class TransparentVolumeBot:
             return {}
     
     def refresh_tokens(self):
-        """Refresh token list using optimized shared system with error handling"""
+        """Refresh token list using optimized shared system"""
         try:
             self.logger.info("🔄 Refreshing token list via shared manager...")
             self.tokens = self.token_loader.load_tokens_optimized()
+            self.tokens_refreshed += 1
             self.logger.success(f"Refreshed: {len(self.tokens)} tradeable tokens")
         except Exception as e:
             self.logger.error(f"Failed to refresh tokens: {e}")
-            # Keep existing tokens if refresh fails
     
     def force_cache_refresh(self):
-        """Force a complete refresh via shared manager with error handling"""
+        """Force a complete refresh via shared manager"""
         try:
             self.token_loader.force_refresh()
             self.refresh_tokens()
@@ -355,7 +368,7 @@ class TransparentVolumeBot:
             self.logger.error(f"Failed to force refresh: {e}")
     
     def get_cache_stats(self):
-        """Get shared manager statistics with error handling"""
+        """Get shared manager statistics"""
         try:
             return self.token_loader.get_stats()
         except Exception as e:
@@ -363,12 +376,14 @@ class TransparentVolumeBot:
             return {}
     
     def execute_trade_cycle(self):
-        """Execute one complete trading cycle with comprehensive error handling"""
+        """OPTIMIZED trade cycle with adaptive intervals and reduced overhead"""
         try:
-            if self.verbose:
-                print(f"\n🤖 TVB: --- Starting Trade Cycle ---")
+            self.cycle_count += 1
             
-            # Check connection health before trading
+            if self.verbose:
+                print(f"\n🤖 TVB: --- Cycle #{self.cycle_count} ---")
+            
+            # OPTIMIZATION: Less frequent connection checks
             current_time = time.time()
             if current_time - self.last_connection_check > self.connection_check_interval:
                 if not self._reconnect_if_needed():
@@ -382,10 +397,16 @@ class TransparentVolumeBot:
                 success = self._attempt_token_creation()
                 if success:
                     self.last_successful_action = time.time()
+                    self.last_successful_trade_time = time.time()
                     self.consecutive_errors = 0
+                    self.successful_trades += 1
+                    self._adapt_intervals_on_success()
+                else:
+                    self.failed_trades += 1
+                    self._adapt_intervals_on_failure()
                 return success
             
-            # Check if we have tokens to trade
+            # Check tokens and balance
             if not self.tokens:
                 self.logger.warning("⏭️ No tradeable tokens, refreshing list...")
                 self.refresh_tokens()
@@ -393,25 +414,20 @@ class TransparentVolumeBot:
                     self.logger.warning("⏭️ Still no tokens found, waiting...")
                     return False
             
-            # Check balance before trading
             current_balance = self.get_avax_balance()
             min_trade_amount = self.config.get('minTradeAmount', 0.005)
             
             if current_balance < min_trade_amount:
                 self.logger.warning(f"💸 Insufficient balance: {current_balance:.6f} AVAX < {min_trade_amount} AVAX")
                 
-                # Send balance alert only occasionally to avoid spam
-                if hasattr(self, '_last_balance_alert'):
-                    if time.time() - self._last_balance_alert > 300:  # 5 minutes
-                        self.webhook.send_balance_alert(current_balance, min_trade_amount, "insufficient")
-                        self._last_balance_alert = time.time()
-                else:
+                # OPTIMIZATION: Send balance alert less frequently
+                if not hasattr(self, '_last_balance_alert') or time.time() - self._last_balance_alert > 300:
                     self.webhook.send_balance_alert(current_balance, min_trade_amount, "insufficient")
                     self._last_balance_alert = time.time()
                 
                 return False
             
-            # Select random token and execute trade
+            # Execute trade
             token = random.choice(self.tokens)
             
             if self.verbose:
@@ -421,44 +437,62 @@ class TransparentVolumeBot:
             
             if success:
                 self.last_successful_action = time.time()
+                self.last_successful_trade_time = time.time()
                 self.consecutive_errors = 0
+                self.successful_trades += 1
+                self._adapt_intervals_on_success()
+                
                 if self.verbose:
                     self.logger.success(f"Trade cycle completed for {token['symbol']}")
             else:
                 self.consecutive_errors += 1
+                self.failed_trades += 1
+                self._adapt_intervals_on_failure()
                 self.logger.warning(f"Trade cycle failed for {token['symbol']} (consecutive errors: {self.consecutive_errors})")
             
             return success
             
-        except Web3Exception as e:
-            self.logger.error(f"Web3 error in trade cycle: {e}")
-            self.consecutive_errors += 1
-            
-            # Try to reconnect on Web3 errors
-            self._reconnect_if_needed()
-            
-            # Send error webhook
-            self.webhook.send_error_update(f"Web3 error: {str(e)}", "web3_error")
-            return False
-            
         except Exception as e:
-            self.logger.error(f"Unexpected error in trade cycle: {e}")
+            error_msg = f"Trade cycle error: {e}"
+            self.logger.error(error_msg)
             self.consecutive_errors += 1
+            self.failed_trades += 1
+            self._adapt_intervals_on_failure()
             
-            # Send error webhook
-            self.webhook.send_error_update(str(e), "trade_cycle_error")
+            # Send error webhook (will be batched automatically)
+            self.webhook.send_error_update(error_msg, "trade_cycle_error")
             return False
     
+    def _adapt_intervals_on_success(self):
+        """OPTIMIZATION: Adapt trading intervals on successful trades"""
+        # Gradually reduce intervals on success (more aggressive trading)
+        self.error_backoff_multiplier = max(0.5, self.error_backoff_multiplier * 0.95)
+        
+        self.current_min_interval = max(
+            self.base_min_interval,
+            int(self.base_min_interval * self.error_backoff_multiplier)
+        )
+        self.current_max_interval = max(
+            self.base_max_interval,
+            int(self.base_max_interval * self.error_backoff_multiplier)
+        )
+    
+    def _adapt_intervals_on_failure(self):
+        """OPTIMIZATION: Adapt trading intervals on failed trades"""
+        # Gradually increase intervals on failure (less aggressive trading)
+        self.error_backoff_multiplier = min(3.0, self.error_backoff_multiplier * 1.1)
+        
+        self.current_min_interval = int(self.base_min_interval * self.error_backoff_multiplier)
+        self.current_max_interval = int(self.base_max_interval * self.error_backoff_multiplier)
+    
     def _attempt_token_creation(self):
-        """Attempt to create a new token with personality-driven concept"""
+        """Attempt to create a new token"""
         try:
             self.logger.info("🎨 Considering token creation...")
             
-            # Use trader's token creation functionality
             success = self.trader.attempt_token_creation()
             
             if success:
-                # Refresh token list to include the new token
                 self.logger.info("🔄 Refreshing token list to include new creation...")
                 self.refresh_tokens()
             
@@ -469,59 +503,33 @@ class TransparentVolumeBot:
             self.webhook.send_error_update(f"Token creation error: {str(e)}", "token_creation_error")
             return False
     
-    def send_heartbeat(self):
-        """Send periodic heartbeat update with session metrics and error handling"""
-        try:
-            shared_stats = self.get_cache_stats()
-            
-            # Check for low balance alert (but don't spam)
-            current_balance = self.get_avax_balance()
-            min_trade_amount = self.config.get('minTradeAmount', 0.005)
-            if current_balance < min_trade_amount * 2:
-                self.webhook.send_balance_alert(
-                    balance=current_balance,
-                    threshold=min_trade_amount * 2,
-                    alert_type="low"
-                )
-            
-            # Send enhanced heartbeat with session metrics
-            success = self.webhook.send_heartbeat(
-                balance_info={}, # Not needed anymore, webhook calculates it
-                token_count=len(self.tokens),
-                extra_data={
-                    "minTradeAmount": min_trade_amount,
-                    "walletAddress": self.account.address,  # Include wallet address
-                    "sharedManagerStats": {
-                        "total_tokens": shared_stats.get("total_tokens", 0),
-                        "registered_bots": shared_stats.get("registered_bots", 0),
-                        "factory_queries_saved": shared_stats.get("factory_queries_saved", 0),
-                        "next_refresh_minutes": shared_stats.get("next_refresh_in_minutes", 0)
-                    },
-                    "connectionHealth": self._check_connection_health(),
-                    "consecutiveErrors": self.consecutive_errors
-                }
-            )
-            
-            return success
-            
-        except Exception as e:
-            self.logger.error(f"Failed to send heartbeat: {e}")
-            return False
-    
     def print_session_summary(self):
-        """Print comprehensive session summary with wallet address"""
+        """Print comprehensive session summary with optimization stats"""
         try:
-            print(f"\n🤖 TVB: 📊 {self.display_name} Session Summary:")
+            print(f"\n🤖 TVB: 📊 {self.display_name} OPTIMIZED Session Summary:")
             print(f"  👤 Account: {self.account.address}")
             
-            # Get session metrics from webhook manager (includes wallet address)
+            # Get session metrics from webhook manager
             self.webhook.print_session_summary()
             
-            # Additional bot-specific info
-            print(f"  🎯 Tokens Tracked: {len(self.tokens)}")
-            print(f"  ⚠️ Consecutive Errors: {self.consecutive_errors}")
+            # Bot-specific performance stats
+            print(f"\n🤖 TVB: 🎯 Trading Performance:")
+            print(f"  🔄 Total cycles: {self.cycle_count}")
+            print(f"  ✅ Successful trades: {self.successful_trades}")
+            print(f"  ❌ Failed trades: {self.failed_trades}")
+            if self.cycle_count > 0:
+                success_rate = (self.successful_trades / self.cycle_count) * 100
+                print(f"  📊 Success rate: {success_rate:.1f}%")
+            print(f"  🎯 Tokens tracked: {len(self.tokens)}")
+            print(f"  🔄 Token refreshes: {self.tokens_refreshed}")
+            print(f"  ⚠️ Consecutive errors: {self.consecutive_errors}")
             
-            # Show shared manager stats
+            # Optimization stats
+            print(f"\n🤖 TVB: 🚀 Optimization Stats:")
+            print(f"  ⚡ Current intervals: {self.current_min_interval}-{self.current_max_interval}s (base: {self.base_min_interval}-{self.base_max_interval}s)")
+            print(f"  📉 Error backoff: {self.error_backoff_multiplier:.2f}x")
+            
+            # Shared manager stats
             shared_stats = self.get_cache_stats()
             print(f"  🌐 Shared Manager:")
             print(f"    🤖 Total bots: {shared_stats.get('registered_bots', 0)}")
@@ -532,23 +540,17 @@ class TransparentVolumeBot:
             self.logger.error(f"Failed to print session summary: {e}")
 
     def run(self):
-        """Enhanced main trading loop with robust error handling and recovery"""
+        """OPTIMIZED main trading loop with reduced webhook overhead"""
         try:
             self.is_running = True
-            self.logger.info("🚀 Starting enhanced trading loop with improved error handling...")
+            self.logger.info("🚀 Starting OPTIMIZED trading loop...")
             
-            cycle_count = 0
-            last_heartbeat = 0
             last_token_refresh = 0
-            heartbeat_interval = 120  # 2 minutes
             token_refresh_interval = 300  # 5 minutes
             
-            # Send initial heartbeat
-            self.send_heartbeat()
-            last_heartbeat = time.time()
+            # NOTE: No manual heartbeat sending needed - OptimizedWebhookManager handles this automatically
             
             while self.is_running and not self.shutdown_requested:
-                cycle_count += 1
                 current_time = time.time()
                 
                 try:
@@ -556,47 +558,40 @@ class TransparentVolumeBot:
                     if self.consecutive_errors >= self.max_consecutive_errors:
                         self.logger.error(f"🔴 Too many consecutive errors ({self.consecutive_errors}), pausing for recovery...")
                         
-                        # Send error notification
+                        # Send error notification (will be sent immediately as it's critical)
                         self.webhook.send_error_update(
                             f"Bot paused due to {self.consecutive_errors} consecutive errors", 
                             "error_threshold_reached"
                         )
                         
                         # Wait longer and try to recover
-                        time.sleep(60)  # Wait 1 minute
+                        time.sleep(60)
                         
-                        # Try to reconnect and refresh
                         if self._reconnect_if_needed():
                             self.refresh_tokens()
-                            self.consecutive_errors = 0  # Reset on successful recovery
+                            self.consecutive_errors = 0
                             self.logger.info("🟢 Recovery successful, resuming normal operation")
                         else:
                             self.logger.error("🔴 Recovery failed, continuing with limited operation")
                     
                     if self.verbose:
-                        self.logger.cycle(cycle_count, "Starting trade cycle")
+                        self.logger.cycle(self.cycle_count + 1, "Starting trade cycle")
                     
-                    # Execute trading logic with error handling
+                    # Execute trading logic
                     try:
                         self.execute_trade_cycle()
                     except KeyboardInterrupt:
-                        raise  # Let keyboard interrupt bubble up
+                        raise
                     except Exception as e:
                         self.logger.error(f"Trade cycle error: {e}")
                         self.consecutive_errors += 1
+                        self.failed_trades += 1
+                        self._adapt_intervals_on_failure()
                         
-                        # Send error webhook but don't crash
+                        # Send error webhook (will be batched automatically)
                         self.webhook.send_error_update(str(e), "trade_cycle_error")
                     
-                    # Send heartbeat every 2 minutes
-                    if current_time - last_heartbeat >= heartbeat_interval:
-                        success = self.send_heartbeat()
-                        if success:
-                            last_heartbeat = current_time
-                        else:
-                            self.logger.warning("Heartbeat failed, will retry sooner")
-                    
-                    # Refresh tokens every 5 minutes to pick up new ones
+                    # OPTIMIZATION: Less frequent token refreshes
                     if current_time - last_token_refresh >= token_refresh_interval:
                         try:
                             self.refresh_tokens()
@@ -604,21 +599,13 @@ class TransparentVolumeBot:
                         except Exception as e:
                             self.logger.warning(f"Token refresh failed: {e}")
                     
-                    # Calculate sleep time based on personality and error state
-                    min_interval = self.config.get('minInterval', 15)
-                    max_interval = self.config.get('maxInterval', 60)
-                    
-                    # Increase intervals if we're having errors
-                    if self.consecutive_errors > 0:
-                        error_multiplier = min(3, 1 + (self.consecutive_errors * 0.5))
-                        min_interval = int(min_interval * error_multiplier)
-                        max_interval = int(max_interval * error_multiplier)
-                    
-                    sleep_time = random.uniform(min_interval, max_interval)
+                    # OPTIMIZATION: Adaptive sleep time based on performance
+                    sleep_time = random.uniform(self.current_min_interval, self.current_max_interval)
                     
                     if self.verbose:
                         error_status = f" (errors: {self.consecutive_errors})" if self.consecutive_errors > 0 else ""
-                        self.logger.info(f"💤 Cycle {cycle_count} complete{error_status}, sleeping {sleep_time:.1f}s")
+                        performance_info = f" (success: {self.successful_trades}, failed: {self.failed_trades})"
+                        self.logger.info(f"💤 Cycle {self.cycle_count} complete{error_status}{performance_info}, sleeping {sleep_time:.1f}s")
                     
                     # Sleep with interruption checking
                     sleep_interval = 0.5
@@ -635,25 +622,22 @@ class TransparentVolumeBot:
                     self.logger.error(f"Outer loop error: {e}")
                     self.logger.error(f"Traceback: {traceback.format_exc()}")
                     
-                    # Send error webhook
+                    # Send error webhook (will be sent immediately as it's critical)
                     self.webhook.send_error_update(str(e), "outer_loop_error")
                     
-                    # Don't increment consecutive errors for outer loop errors
-                    # as they might be transient
-                    
-                    # Sleep a bit before retrying
+                    # Sleep before retrying
                     time.sleep(30)
                     
         except KeyboardInterrupt:
-            self._handle_shutdown(cycle_count, "user")
+            self._handle_shutdown("user")
         except Exception as e:
-            self._handle_shutdown(cycle_count, "crash", str(e))
+            self._handle_shutdown("crash", str(e))
         finally:
             self.is_running = False
         
-        self.logger.info("👋 Bot trading loop ended")
+        self.logger.info("👋 OPTIMIZED bot trading loop ended")
     
-    def _handle_shutdown(self, cycle_count, reason, error_msg=None):
+    def _handle_shutdown(self, reason, error_msg=None):
         """Handle bot shutdown gracefully with enhanced reporting"""
         try:
             self.is_running = False
@@ -662,27 +646,34 @@ class TransparentVolumeBot:
             session_metrics = self.get_session_metrics()
             
             shutdown_info = {
-                "totalCycles": cycle_count,
+                "totalCycles": self.cycle_count,
+                "successfulTrades": self.successful_trades,
+                "failedTrades": self.failed_trades,
                 "sessionMetrics": session_metrics,
-                "walletAddress": self.account.address,  # Include wallet address in shutdown
-                "consecutiveErrors": self.consecutive_errors
+                "walletAddress": self.account.address,
+                "consecutiveErrors": self.consecutive_errors,
+                "optimizationStats": {
+                    "tokensRefreshed": self.tokens_refreshed,
+                    "finalIntervals": f"{self.current_min_interval}-{self.current_max_interval}s",
+                    "errorBackoffMultiplier": self.error_backoff_multiplier,
+                }
             }
             
             if reason == "user":
-                print(f"\n🤖 TVB: 🛑 Bot stopped by user")
+                print(f"\n🤖 TVB: 🛑 OPTIMIZED Bot stopped by user")
                 shutdown_info.update({
                     "message": f"{self.display_name} is going offline (user requested)",
                     "reason": "User initiated shutdown"
                 })
             elif reason == "crash":
-                print(f"\n🤖 TVB: 💥 Bot crashed: {error_msg}")
+                print(f"\n🤖 TVB: 💥 OPTIMIZED Bot crashed: {error_msg}")
                 shutdown_info.update({
                     "message": f"Bot crashed: {error_msg}",
                     "reason": "System error",
                     "error": error_msg
                 })
             
-            # Send shutdown notification
+            # Send shutdown notification (will flush any pending batched requests)
             try:
                 self.webhook.send_shutdown_notification(shutdown_info)
             except Exception as e:
@@ -698,14 +689,6 @@ class TransparentVolumeBot:
             # Print final stats
             if self.verbose:
                 self.print_session_summary()
-                print(f"🤖 TVB: 🔄 Total Cycles: {cycle_count}")
-                print(f"🤖 TVB: ⚠️ Final Error Count: {self.consecutive_errors}")
-                
-                # Print shared manager stats
-                shared_stats = self.get_cache_stats()
-                print(f"\n🤖 TVB: 🌐 Shared Manager Final Stats:")
-                print(f"  🚀 Factory queries saved: {shared_stats.get('factory_queries_saved', 0)}")
-                print(f"  🤖 Bots served: {shared_stats.get('registered_bots', 0)}")
                 
         except Exception as e:
             print(f"🤖 TVB: ❌ Error during shutdown: {e}")
@@ -717,8 +700,11 @@ class TransparentVolumeBot:
         self.is_running = False
 
 
+# Backward compatibility alias
+TransparentVolumeBot = OptimizedTransparentVolumeBot
+
+
 # Example usage for testing
 if __name__ == "__main__":
-    # Test bot initialization (won't actually run without config)
-    print("🤖 TVB: Enhanced core bot class loaded successfully!")
+    print("🤖 TVB: OPTIMIZED core bot class loaded successfully!")
     print("Use main.py to run the bot with proper configuration.")

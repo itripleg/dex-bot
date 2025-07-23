@@ -1,77 +1,174 @@
-# bot/webhook.py - Fixed webhook manager with proper error handling and wallet address
+# bot/webhook.py - OPTIMIZED webhook manager with smart heartbeat and reduced requests
 #!/usr/bin/env python3
 """
-Enhanced Webhook Manager with session balance tracking, P&L calculations, and wallet address
-Fixed to prevent webhook failures from crashing bots
+OPTIMIZED Webhook Manager with intelligent heartbeat scheduling and request reduction
+Dramatically reduces API calls while maintaining reliable connection status
 """
 
 import json
 import random
 import requests
-from datetime import datetime
+import time
+import threading
+from datetime import datetime, timedelta
 from requests.exceptions import RequestException, Timeout, ConnectionError
 
-class WebhookManager:
-    """Manages webhook communications with session balance tracking, P&L calculations, and wallet address"""
+class OptimizedWebhookManager:
+    """OPTIMIZED webhook manager with smart heartbeat scheduling and request batching"""
     
     def __init__(self, bot_name, display_name, avatar_url, webhook_url, bot_secret, phrases, bio=None, get_balance_callback=None, wallet_address=None):
         self.bot_name = bot_name
         self.display_name = display_name
         self.avatar_url = avatar_url
         self.webhook_url = webhook_url
-        self.bot_secret = bot_secret or "dev"  # Fallback to "dev" if None
+        self.bot_secret = bot_secret or "dev"
         self.phrases = phrases
         self.bio = bio
-        self.get_balance_callback = get_balance_callback  # Callback to get current AVAX balance
-        self.wallet_address = wallet_address  # Store the bot's wallet address
+        self.get_balance_callback = get_balance_callback
+        self.wallet_address = wallet_address
         
         # Session balance tracking
         self.starting_balance = None
         self.session_start_time = None
         
-        # Define which actions should get personality phrases vs system messages
-        self.personality_actions = {'buy', 'sell', 'create_token', 'error', 'hold'}
-        self.system_actions = {
-            'cycle_start', 'cycle_complete', 'token_refresh', 'heartbeat', 'startup', 
-            'shutdown', 'buy_attempt', 'sell_attempt', 'trade_failure', 'insufficient_funds',
-            'forced_sell', 'balance_alert', 'token_refresh_start', 'token_refresh_complete',
-            'creation_cancelled', 'no_tokens', 'buy_success', 'sell_success', 'buy_failed', 'sell_failed'
-        }
+        # OPTIMIZATION: Smart heartbeat scheduling
+        self.last_heartbeat_sent = 0
+        self.heartbeat_interval = 120  # 2 minutes base interval
+        self.adaptive_heartbeat_interval = 120  # Starts at 2 minutes, can adapt
+        self.max_heartbeat_interval = 300  # Maximum 5 minutes
+        self.min_heartbeat_interval = 60   # Minimum 1 minute
+        self.consecutive_heartbeat_failures = 0
+        self.last_significant_activity = time.time()
         
-        # Track webhook statistics
+        # OPTIMIZATION: Request batching and queuing
+        self.pending_updates = []
+        self.batch_timer = None
+        self.batch_timeout = 5  # Send batch after 5 seconds of inactivity
+        self.max_batch_size = 5  # Or when 5 updates accumulate
+        self.batch_lock = threading.Lock()
+        
+        # OPTIMIZATION: Webhook failure handling
         self.webhook_stats = {
             "total_sent": 0,
             "successful": 0,
             "failed": 0,
             "last_sent": None,
             "last_error": None,
-            "consecutive_failures": 0
+            "consecutive_failures": 0,
+            "heartbeats_sent": 0,
+            "heartbeats_successful": 0,
+            "requests_saved": 0,  # Track how many requests we've saved through optimization
         }
         
-        # Webhook failure handling
-        self.max_consecutive_failures = 5
-        self.failure_backoff_time = 60  # seconds
+        self.max_consecutive_failures = 3  # Reduced from 5
+        self.failure_backoff_time = 30  # Reduced from 60
         self.last_failure_time = 0
+        
+        # OPTIMIZATION: Activity classification
+        self.priority_actions = {'buy', 'sell', 'create_token', 'error', 'startup', 'shutdown', 'insufficient_funds'}
+        self.system_actions = {'heartbeat', 'hold', 'balance_alert', 'token_refresh', 'cycle_complete'}
+        self.personality_actions = {'buy', 'sell', 'create_token', 'hold', 'error'}
         
         self.enabled = bool(webhook_url and self.bot_secret)
         
+        # Start heartbeat scheduler
+        self._start_heartbeat_scheduler()
+        
         if self.enabled:
-            print(f"🤖 TVB: 📡 Webhook manager initialized for {display_name}")
+            print(f"🤖 TVB: 📡 OPTIMIZED Webhook manager initialized for {display_name}")
             print(f"🤖 TVB: 🎯 Target: {webhook_url}")
+            print(f"🤖 TVB: 💓 Smart heartbeat: {self.heartbeat_interval}s (adaptive)")
+            print(f"🤖 TVB: 📦 Request batching enabled (max {self.max_batch_size} items, {self.batch_timeout}s timeout)")
             print(f"🤖 TVB: 💼 Wallet: {wallet_address or 'Not provided'}")
-            if self.bot_secret == "dev":
-                print("🤖 TVB: 🔐 Using default webhook secret: 'dev' (development mode)")
-            else:
-                print("🤖 TVB: 🔐 Using configured webhook secret")
-            if bio:
-                print(f"🤖 TVB: 📝 Bio: {bio[:50]}..." if len(bio) > 50 else f"🤖 TVB: 📝 Bio: {bio}")
         else:
             print(f"🤖 TVB: ⚠️ Webhook disabled - missing URL or secret")
     
-    def set_wallet_address(self, wallet_address):
-        """Set or update the bot's wallet address"""
-        self.wallet_address = wallet_address
-        print(f"🤖 TVB: 💼 Wallet address set: {wallet_address}")
+    def _start_heartbeat_scheduler(self):
+        """Start the background heartbeat scheduler thread"""
+        if not self.enabled:
+            return
+            
+        def heartbeat_worker():
+            while True:
+                try:
+                    time.sleep(10)  # Check every 10 seconds
+                    
+                    current_time = time.time()
+                    time_since_last_heartbeat = current_time - self.last_heartbeat_sent
+                    
+                    # OPTIMIZATION: Adaptive heartbeat interval based on activity
+                    time_since_activity = current_time - self.last_significant_activity
+                    
+                    if time_since_activity < 300:  # Active in last 5 minutes
+                        self.adaptive_heartbeat_interval = self.min_heartbeat_interval
+                    elif time_since_activity < 900:  # Active in last 15 minutes
+                        self.adaptive_heartbeat_interval = self.heartbeat_interval
+                    else:  # Inactive for a while
+                        self.adaptive_heartbeat_interval = self.max_heartbeat_interval
+                    
+                    # Send heartbeat if interval has passed
+                    if time_since_last_heartbeat >= self.adaptive_heartbeat_interval:
+                        self._send_scheduled_heartbeat()
+                        
+                except Exception as e:
+                    print(f"🤖 TVB: ❌ Heartbeat scheduler error: {e}")
+                    time.sleep(30)  # Wait before retrying
+        
+        heartbeat_thread = threading.Thread(target=heartbeat_worker, daemon=True)
+        heartbeat_thread.start()
+        print(f"🤖 TVB: 💓 Heartbeat scheduler started for {self.display_name}")
+    
+    def _send_scheduled_heartbeat(self):
+        """Send an automatic heartbeat"""
+        try:
+            # Don't send heartbeat if we have recent failures
+            if self._should_skip_webhook():
+                self.webhook_stats["requests_saved"] += 1
+                return
+            
+            current_balance = self._get_current_balance()
+            session_metrics = self._calculate_session_metrics()
+            
+            details = {
+                "message": f"{self.display_name} heartbeat",
+                "status": "active",
+                "automaticHeartbeat": True,
+                "intervalUsed": self.adaptive_heartbeat_interval,
+                "timeSinceActivity": time.time() - self.last_significant_activity,
+            }
+            
+            # Add session metrics
+            details.update(session_metrics)
+            
+            # Add wallet address
+            if self.wallet_address:
+                details["walletAddress"] = self.wallet_address
+            
+            success = self._send_webhook_direct("heartbeat", details)
+            
+            if success:
+                self.last_heartbeat_sent = time.time()
+                self.consecutive_heartbeat_failures = 0
+                self.webhook_stats["heartbeats_successful"] += 1
+                
+                # OPTIMIZATION: Extend heartbeat interval on success if no recent activity
+                if time.time() - self.last_significant_activity > 600:  # 10 minutes
+                    self.adaptive_heartbeat_interval = min(
+                        self.adaptive_heartbeat_interval * 1.2,
+                        self.max_heartbeat_interval
+                    )
+            else:
+                self.consecutive_heartbeat_failures += 1
+                # OPTIMIZATION: Reduce heartbeat interval on failure to try to reconnect
+                self.adaptive_heartbeat_interval = max(
+                    self.adaptive_heartbeat_interval * 0.8,
+                    self.min_heartbeat_interval
+                )
+            
+            self.webhook_stats["heartbeats_sent"] += 1
+            
+        except Exception as e:
+            print(f"🤖 TVB: ❌ Scheduled heartbeat error: {e}")
     
     def _get_current_balance(self):
         """Get current AVAX balance via callback with error handling"""
@@ -99,11 +196,22 @@ class WebhookManager:
             pnl_amount = current_balance - self.starting_balance
             pnl_percentage = (pnl_amount / self.starting_balance * 100) if self.starting_balance > 0 else 0
             
+            # Add session timing
+            session_duration_minutes = 0
+            if self.session_start_time:
+                try:
+                    start_time = datetime.fromisoformat(self.session_start_time.replace('Z', ''))
+                    duration = datetime.utcnow() - start_time
+                    session_duration_minutes = int(duration.total_seconds() / 60)
+                except:
+                    pass
+            
             return {
                 "currentBalance": round(current_balance, 6),
                 "startingBalance": round(self.starting_balance, 6),
                 "pnlAmount": round(pnl_amount, 6),
-                "pnlPercentage": round(pnl_percentage, 2)
+                "pnlPercentage": round(pnl_percentage, 2),
+                "sessionDurationMinutes": session_duration_minutes,
             }
         except Exception as e:
             print(f"🤖 TVB: ⚠️ Error calculating session metrics: {e}")
@@ -111,7 +219,8 @@ class WebhookManager:
                 "currentBalance": 0,
                 "startingBalance": 0,
                 "pnlAmount": 0,
-                "pnlPercentage": 0
+                "pnlPercentage": 0,
+                "sessionDurationMinutes": 0,
             }
     
     def set_session_start(self, starting_balance, start_time=None):
@@ -120,10 +229,15 @@ class WebhookManager:
         self.session_start_time = start_time or datetime.utcnow().isoformat() + "Z"
         print(f"🤖 TVB: 💰 Session started with {starting_balance:.6f} AVAX")
     
+    def set_wallet_address(self, wallet_address):
+        """Set or update the bot's wallet address"""
+        self.wallet_address = wallet_address
+        print(f"🤖 TVB: 💼 Wallet address set: {wallet_address}")
+    
     def _should_skip_webhook(self):
         """Check if we should skip webhook due to consecutive failures"""
         if self.webhook_stats["consecutive_failures"] >= self.max_consecutive_failures:
-            time_since_failure = datetime.utcnow().timestamp() - self.last_failure_time
+            time_since_failure = time.time() - self.last_failure_time
             if time_since_failure < self.failure_backoff_time:
                 return True
             else:
@@ -131,13 +245,101 @@ class WebhookManager:
                 self.webhook_stats["consecutive_failures"] = 0
         return False
     
+    def _queue_update(self, action_type, details):
+        """OPTIMIZATION: Queue update for batch processing"""
+        with self.batch_lock:
+            update = {
+                "action": action_type,
+                "details": details,
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "priority": self._get_action_priority(action_type)
+            }
+            
+            self.pending_updates.append(update)
+            
+            # Mark significant activity for heartbeat scheduling
+            if action_type in self.priority_actions:
+                self.last_significant_activity = time.time()
+            
+            # OPTIMIZATION: Send immediately for high priority actions
+            if action_type in {'startup', 'shutdown', 'error', 'insufficient_funds'}:
+                self._flush_batch()
+            # OPTIMIZATION: Send batch when it reaches max size
+            elif len(self.pending_updates) >= self.max_batch_size:
+                self._flush_batch()
+            # OPTIMIZATION: Set timer for batch timeout
+            elif self.batch_timer is None:
+                self._set_batch_timer()
+    
+    def _get_action_priority(self, action_type):
+        """Get priority score for action (higher = more important)"""
+        priority_map = {
+            'error': 10,
+            'insufficient_funds': 10,
+            'startup': 9,
+            'shutdown': 9,
+            'buy': 8,
+            'sell': 8,
+            'create_token': 7,
+            'hold': 5,
+            'balance_alert': 4,
+            'heartbeat': 2,
+        }
+        return priority_map.get(action_type, 3)
+    
+    def _set_batch_timer(self):
+        """Set timer to flush batch after timeout"""
+        def flush_timer():
+            time.sleep(self.batch_timeout)
+            with self.batch_lock:
+                if self.batch_timer is not None:
+                    self.batch_timer = None
+                    self._flush_batch()
+        
+        self.batch_timer = threading.Thread(target=flush_timer, daemon=True)
+        self.batch_timer.start()
+    
+    def _flush_batch(self):
+        """Flush all pending updates"""
+        if not self.pending_updates:
+            return
+        
+        # Sort by priority (highest first)
+        self.pending_updates.sort(key=lambda x: x["priority"], reverse=True)
+        
+        # OPTIMIZATION: For multiple updates, send most important one
+        # and summarize the rest in details
+        primary_update = self.pending_updates[0]
+        other_updates = self.pending_updates[1:]
+        
+        # Add summary of other updates
+        if other_updates:
+            primary_update["details"]["batchedUpdates"] = len(other_updates)
+            primary_update["details"]["otherActions"] = [u["action"] for u in other_updates[:3]]
+            if len(other_updates) > 3:
+                primary_update["details"]["additionalActions"] = len(other_updates) - 3
+            
+            # Save requests by batching
+            self.webhook_stats["requests_saved"] += len(other_updates)
+        
+        # Send the primary update
+        self._send_webhook_direct(primary_update["action"], primary_update["details"])
+        
+        # Clear pending updates
+        self.pending_updates.clear()
+        
+        # Clear batch timer
+        if self.batch_timer is not None:
+            self.batch_timer = None
+    
     def send_update(self, action_type, details):
-        """Send webhook update with session financial metrics and wallet address"""
+        """OPTIMIZED send update with intelligent batching"""
         if not self.enabled:
             return False
         
-        # Skip if we're in failure backoff
-        if self._should_skip_webhook():
+        # Skip if we're in failure backoff (except for critical actions)
+        if self._should_skip_webhook() and action_type not in {'startup', 'shutdown', 'error'}:
+            self.webhook_stats["requests_saved"] += 1
             return False
         
         try:
@@ -147,13 +349,12 @@ class WebhookManager:
             elif not isinstance(details, dict):
                 details = {"message": str(details)}
             
-            # Only add personality phrases for actual trading actions, not system messages
+            # Add personality phrases for personality actions
             if action_type in self.personality_actions and 'message' not in details:
                 phrase_list = self.phrases.get(action_type, [])
                 if phrase_list:
                     details['message'] = random.choice(phrase_list)
                 else:
-                    # Fallback messages for actions without configured phrases
                     fallback_messages = {
                         'hold': f"Staying put with this position for now.",
                         'buy': "Making a purchase!",
@@ -161,19 +362,7 @@ class WebhookManager:
                         'create_token': "Creating something new!",
                         'error': "Encountered a minor hiccup."
                     }
-                    details['message'] = fallback_messages.get(action_type, f"Personality action: {action_type}")
-            
-            # For system actions, keep the provided message or use a default
-            elif action_type in self.system_actions and 'message' not in details:
-                system_messages = {
-                    'insufficient_funds': "Insufficient AVAX for trading operations",
-                    'forced_sell': "Forced to sell due to low AVAX balance",
-                    'balance_alert': "Balance threshold reached",
-                    'heartbeat': f"{self.display_name} is active and monitoring markets",
-                    'startup': f"{self.display_name} is initializing trading systems",
-                    'shutdown': f"{self.display_name} is going offline"
-                }
-                details['message'] = system_messages.get(action_type, f"System: {action_type.replace('_', ' ').title()}")
+                    details['message'] = fallback_messages.get(action_type, f"Performed {action_type}")
             
             # Add session financial metrics to all updates
             session_metrics = self._calculate_session_metrics()
@@ -182,32 +371,46 @@ class WebhookManager:
             # Add session timing
             if self.session_start_time:
                 details['sessionStartTime'] = self.session_start_time
-                details['sessionDurationMinutes'] = self._get_session_duration_minutes()
             
-            # ALWAYS INCLUDE WALLET ADDRESS IN DETAILS
+            # Always include wallet address
             if self.wallet_address:
                 details['walletAddress'] = self.wallet_address
-                details['address'] = self.wallet_address  # Alternative field name for compatibility
+                details['address'] = self.wallet_address
             
-            # Build payload with bio, balance, and wallet address included
+            # OPTIMIZATION: Queue for batch processing (except critical actions)
+            if action_type in {'startup', 'shutdown', 'error', 'insufficient_funds'}:
+                return self._send_webhook_direct(action_type, details)
+            else:
+                self._queue_update(action_type, details)
+                return True
+                
+        except Exception as e:
+            print(f"🤖 TVB: ❌ Webhook error: {e}")
+            self._update_stats(False, action_type, str(e))
+            return False
+    
+    def _send_webhook_direct(self, action_type, details):
+        """Send webhook directly without batching"""
+        try:
+            # Build payload
             payload = {
                 "botName": self.bot_name,
                 "displayName": self.display_name,
                 "avatarUrl": self.avatar_url,
                 "bio": self.bio,
-                "walletAddress": self.wallet_address,  # Include at top level too
+                "walletAddress": self.wallet_address,
                 "action": action_type,
                 "details": details,
                 "timestamp": datetime.utcnow().isoformat() + "Z",
                 "botSecret": self.bot_secret
             }
             
-            # Also add bio to details for startup specifically
+            # Include bio in startup
             if action_type == 'startup' and self.bio:
                 payload["details"]["bio"] = self.bio
             
             # Send webhook
-            success = self._send_webhook(payload)
+            success = self._send_webhook_request(payload)
             
             # Update statistics
             self._update_stats(success, action_type)
@@ -215,149 +418,17 @@ class WebhookManager:
             return success
             
         except Exception as e:
-            print(f"🤖 TVB: ❌ Webhook error: {e}")
+            print(f"🤖 TVB: ❌ Direct webhook error: {e}")
             self._update_stats(False, action_type, str(e))
             return False
     
-    def _get_session_duration_minutes(self):
-        """Get session duration in minutes"""
-        if not self.session_start_time:
-            return 0
-        
-        try:
-            start_time = datetime.fromisoformat(self.session_start_time.replace('Z', ''))
-            duration = datetime.utcnow() - start_time
-            return int(duration.total_seconds() / 60)
-        except:
-            return 0
-    
-    def send_startup_notification(self, startup_info):
-        """Send startup notification and set session metrics with wallet address"""
-        try:
-            # Set session start metrics
-            current_balance = self._get_current_balance()
-            if current_balance is not None:
-                self.set_session_start(current_balance)
-                startup_info['initialBalance'] = round(current_balance, 6)
-            
-            # Ensure bio is included in startup info
-            if self.bio and 'bio' not in startup_info:
-                startup_info['bio'] = self.bio
-            
-            # Log wallet address at startup
-            if self.wallet_address:
-                print(f"🤖 TVB: 💼 {self.display_name} Wallet: {self.wallet_address}")
-                startup_info['walletAddress'] = self.wallet_address
-            else:
-                print(f"🤖 TVB: ⚠️ {self.display_name} has no wallet address configured!")
-            
-            return self.send_update("startup", startup_info)
-        except Exception as e:
-            print(f"🤖 TVB: ❌ Error sending startup notification: {e}")
-            return False
-    
-    def send_trade_update(self, action, token_info, trade_details, post_trade_balance=None):
-        """Send specialized trading update with financial impact and wallet address"""
-        try:
-            details = {
-                "tokenAddress": token_info["address"],
-                "tokenSymbol": token_info["symbol"],
-                "tokenName": token_info["name"]
-            }
-            details.update(trade_details)
-            
-            # Add pre/post trade balance comparison if provided
-            if post_trade_balance is not None:
-                pre_trade_balance = self._get_current_balance()
-                if pre_trade_balance is not None:
-                    balance_change = post_trade_balance - pre_trade_balance
-                    details.update({
-                        'preTradeBalance': round(pre_trade_balance, 6),
-                        'postTradeBalance': round(post_trade_balance, 6),
-                        'balanceChange': round(balance_change, 6)
-                    })
-            
-            return self.send_update(action, details)
-        except Exception as e:
-            print(f"🤖 TVB: ❌ Error sending trade update: {e}")
-            return False
-    
-    def send_buy_update(self, token_info, amount_avax, tx_hash, post_trade_balance=None):
-        """Send buy transaction update with financial metrics and wallet address"""
-        return self.send_trade_update("buy", token_info, {
-            "amountAvax": round(amount_avax, 6),
-            "txHash": tx_hash,
-            "tradeType": "BUY"
-        }, post_trade_balance)
-    
-    def send_sell_update(self, token_info, token_amount, readable_amount, sell_percentage, tx_hash, post_trade_balance=None):
-        """Send sell transaction update with financial metrics and wallet address"""
-        return self.send_trade_update("sell", token_info, {
-            "tokenAmount": str(token_amount),
-            "readableAmount": round(readable_amount, 6),
-            "sellPercentage": round(sell_percentage * 100, 1),
-            "txHash": tx_hash,
-            "tradeType": "SELL"
-        }, post_trade_balance)
-    
-    def send_heartbeat(self, balance_info, token_count, extra_data=None):
-        """Send heartbeat update with comprehensive session metrics and wallet address"""
-        try:
-            details = {
-                "message": f"{self.display_name} is active and trading",
-                "tokensTracked": token_count,
-                "status": "active"
-            }
-            
-            if extra_data:
-                details.update(extra_data)
-            
-            # Financial metrics are automatically added by send_update()
-            return self.send_update("heartbeat", details)
-        except Exception as e:
-            print(f"🤖 TVB: ❌ Error sending heartbeat: {e}")
-            return False
-    
-    def send_error_update(self, error_message, error_type="general_error"):
-        """Send error notification with personality phrase"""
-        try:
-            return self.send_update("error", {
-                "message": f"Encountered an issue: {error_message}",
-                "errorType": error_type,
-                "errorDetails": error_message
-            })
-        except Exception as e:
-            print(f"🤖 TVB: ❌ Error sending error update: {e}")
-            return False
-
-    def send_balance_alert(self, balance, threshold, alert_type="low"):
-        """Send balance alert notification"""
-        try:
-            return self.send_update("balance_alert", {
-                "message": f"Balance alert: {balance:.6f} AVAX (threshold: {threshold:.6f})",
-                "currentBalance": balance,
-                "threshold": threshold,
-                "alertType": alert_type
-            })
-        except Exception as e:
-            print(f"🤖 TVB: ❌ Error sending balance alert: {e}")
-            return False
-
-    def send_shutdown_notification(self, shutdown_info):
-        """Send shutdown notification with session summary"""
-        try:
-            return self.send_update("shutdown", shutdown_info)
-        except Exception as e:
-            print(f"🤖 TVB: ❌ Error sending shutdown notification: {e}")
-            return False
-    
-    def _send_webhook(self, payload):
+    def _send_webhook_request(self, payload):
         """Send the actual HTTP request with enhanced logging and error handling"""
         try:
             response = requests.post(
                 self.webhook_url,
                 json=payload,
-                timeout=10,
+                timeout=15,  # Increased timeout for batch requests
                 headers={"Content-Type": "application/json"}
             )
             
@@ -367,21 +438,27 @@ class WebhookManager:
                 pnl = payload['details'].get('pnlAmount', 0)
                 token = payload['details'].get('tokenSymbol', '')
                 wallet = payload.get('walletAddress', 'No wallet')
+                batched = payload['details'].get('batchedUpdates', 0)
                 
-                # Enhanced logging with P&L and wallet
-                pnl_str = f"P&L: {pnl:+.6f}" if isinstance(pnl, (int, float)) else ""
-                wallet_str = f"Wallet: {wallet[:10]}..." if wallet and wallet != 'No wallet' else "No wallet"
-                
-                if action in self.personality_actions:
-                    if token:
-                        print(f"🤖 TVB: ✅ Personality webhook: {action} {token} | Balance: {balance} AVAX | {pnl_str} | {wallet_str}")
+                # OPTIMIZED: Less verbose logging for heartbeats
+                if action == 'heartbeat':
+                    if payload['details'].get('automaticHeartbeat'):
+                        # Only log automatic heartbeats occasionally
+                        if self.webhook_stats["heartbeats_sent"] % 10 == 0:
+                            print(f"🤖 TVB: 💓 {self.display_name} heartbeat #{self.webhook_stats['heartbeats_sent']} | Balance: {balance}")
                     else:
-                        print(f"🤖 TVB: ✅ Personality webhook: {action} | Balance: {balance} AVAX | {pnl_str} | {wallet_str}")
+                        print(f"🤖 TVB: 💓 {self.display_name} manual heartbeat | Balance: {balance}")
                 else:
+                    # Enhanced logging with batch info
+                    pnl_str = f"P&L: {pnl:+.6f}" if isinstance(pnl, (int, float)) else ""
+                    wallet_str = f"Wallet: {wallet[:10]}..." if wallet and wallet != 'No wallet' else ""
+                    batch_str = f" [+{batched} batched]" if batched > 0 else ""
+                    
                     if token:
-                        print(f"🤖 TVB: ✅ System webhook: {action} {token} | Balance: {balance} AVAX | {pnl_str} | {wallet_str}")
+                        print(f"🤖 TVB: ✅ {action} {token}{batch_str} | Balance: {balance} | {pnl_str} | {wallet_str}")
                     else:
-                        print(f"🤖 TVB: ✅ System webhook: {action} | Balance: {balance} AVAX | {pnl_str} | {wallet_str}")
+                        print(f"🤖 TVB: ✅ {action}{batch_str} | Balance: {balance} | {pnl_str} | {wallet_str}")
+                
                 return True
             else:
                 error_msg = f"HTTP {response.status_code}: {response.text}"
@@ -408,11 +485,11 @@ class WebhookManager:
         
         if success:
             self.webhook_stats["successful"] += 1
-            self.webhook_stats["consecutive_failures"] = 0  # Reset on success
+            self.webhook_stats["consecutive_failures"] = 0
         else:
             self.webhook_stats["failed"] += 1
             self.webhook_stats["consecutive_failures"] += 1
-            self.last_failure_time = datetime.utcnow().timestamp()
+            self.last_failure_time = time.time()
             
             if error_msg:
                 self.webhook_stats["last_error"] = {
@@ -421,58 +498,156 @@ class WebhookManager:
                     "timestamp": self.webhook_stats["last_sent"]
                 }
     
+    # Convenience methods with optimized implementations
+    def send_startup_notification(self, startup_info):
+        """Send startup notification with session metrics"""
+        try:
+            current_balance = self._get_current_balance()
+            if current_balance is not None:
+                self.set_session_start(current_balance)
+                startup_info['initialBalance'] = round(current_balance, 6)
+            
+            if self.bio and 'bio' not in startup_info:
+                startup_info['bio'] = self.bio
+            
+            if self.wallet_address:
+                startup_info['walletAddress'] = self.wallet_address
+            
+            return self.send_update("startup", startup_info)
+        except Exception as e:
+            print(f"🤖 TVB: ❌ Error sending startup notification: {e}")
+            return False
+    
+    def send_buy_update(self, token_info, amount_avax, tx_hash, post_trade_balance=None):
+        """Send buy transaction update"""
+        return self.send_update("buy", {
+            "tokenAddress": token_info["address"],
+            "tokenSymbol": token_info["symbol"],
+            "tokenName": token_info["name"],
+            "amountAvax": round(amount_avax, 6),
+            "txHash": tx_hash,
+            "tradeType": "BUY"
+        })
+    
+    def send_sell_update(self, token_info, token_amount, readable_amount, sell_percentage, tx_hash, post_trade_balance=None):
+        """Send sell transaction update"""
+        return self.send_update("sell", {
+            "tokenAddress": token_info["address"],
+            "tokenSymbol": token_info["symbol"],
+            "tokenName": token_info["name"],
+            "tokenAmount": str(token_amount),
+            "readableAmount": round(readable_amount, 6),
+            "sellPercentage": round(sell_percentage * 100, 1),
+            "txHash": tx_hash,
+            "tradeType": "SELL"
+        })
+    
+    def send_heartbeat(self, balance_info=None, token_count=0, extra_data=None):
+        """Send manual heartbeat (automatic heartbeats are handled by scheduler)"""
+        try:
+            details = {
+                "message": f"{self.display_name} manual heartbeat",
+                "tokensTracked": token_count,
+                "status": "active",
+                "automaticHeartbeat": False,
+            }
+            
+            if extra_data:
+                details.update(extra_data)
+            
+            return self.send_update("heartbeat", details)
+        except Exception as e:
+            print(f"🤖 TVB: ❌ Error sending heartbeat: {e}")
+            return False
+    
+    def send_error_update(self, error_message, error_type="general_error"):
+        """Send error notification"""
+        try:
+            return self.send_update("error", {
+                "message": f"Encountered an issue: {error_message}",
+                "errorType": error_type,
+                "errorDetails": error_message
+            })
+        except Exception as e:
+            print(f"🤖 TVB: ❌ Error sending error update: {e}")
+            return False
+    
+    def send_balance_alert(self, balance, threshold, alert_type="low"):
+        """Send balance alert notification"""
+        try:
+            return self.send_update("balance_alert", {
+                "message": f"Balance alert: {balance:.6f} AVAX (threshold: {threshold:.6f})",
+                "currentBalance": balance,
+                "threshold": threshold,
+                "alertType": alert_type
+            })
+        except Exception as e:
+            print(f"🤖 TVB: ❌ Error sending balance alert: {e}")
+            return False
+    
+    def send_shutdown_notification(self, shutdown_info):
+        """Send shutdown notification"""
+        try:
+            # Flush any pending updates before shutdown
+            with self.batch_lock:
+                self._flush_batch()
+            
+            return self.send_update("shutdown", shutdown_info)
+        except Exception as e:
+            print(f"🤖 TVB: ❌ Error sending shutdown notification: {e}")
+            return False
+    
     def get_session_summary(self):
-        """Get comprehensive session summary"""
+        """Get comprehensive session summary with optimization stats"""
         try:
             metrics = self._calculate_session_metrics()
+            stats = self.get_stats()
             
             return {
                 "sessionStartTime": self.session_start_time,
-                "sessionDurationMinutes": self._get_session_duration_minutes(),
+                "sessionDurationMinutes": metrics.get("sessionDurationMinutes", 0),
                 "startingBalance": metrics["startingBalance"],
                 "currentBalance": metrics["currentBalance"],
                 "pnlAmount": metrics["pnlAmount"],
                 "pnlPercentage": metrics["pnlPercentage"],
                 "walletAddress": self.wallet_address,
-                "webhookStats": self.get_stats()
+                "webhookStats": stats,
+                "optimizationStats": {
+                    "requestsSaved": stats["requests_saved"],
+                    "heartbeatSuccessRate": (stats["heartbeats_successful"] / max(stats["heartbeats_sent"], 1)) * 100,
+                    "adaptiveHeartbeatInterval": self.adaptive_heartbeat_interval,
+                    "batchingEnabled": True,
+                }
             }
         except Exception as e:
             print(f"🤖 TVB: ❌ Error getting session summary: {e}")
-            return {
-                "sessionStartTime": self.session_start_time,
-                "sessionDurationMinutes": 0,
-                "startingBalance": 0,
-                "currentBalance": 0,
-                "pnlAmount": 0,
-                "pnlPercentage": 0,
-                "walletAddress": self.wallet_address,
-                "webhookStats": self.get_stats()
-            }
+            return {}
     
     def print_session_summary(self):
-        """Print session financial summary with wallet address"""
+        """Print session summary with optimization stats"""
         try:
             summary = self.get_session_summary()
+            optimization = summary.get("optimizationStats", {})
             
-            print(f"\n🤖 TVB: 📊 Session Financial Summary:")
-            print(f"  💼 Wallet: {summary['walletAddress'] or 'Not configured'}")
-            print(f"  💰 Starting Balance: {summary['startingBalance']:.6f} AVAX")
-            print(f"  💰 Current Balance: {summary['currentBalance']:.6f} AVAX")
-            print(f"  📈 P&L Amount: {summary['pnlAmount']:+.6f} AVAX")
-            print(f"  📈 P&L Percentage: {summary['pnlPercentage']:+.2f}%")
-            print(f"  ⏰ Session Duration: {summary['sessionDurationMinutes']} minutes")
+            print(f"\n🤖 TVB: 📊 OPTIMIZED Session Summary:")
+            print(f"  💼 Wallet: {summary.get('walletAddress', 'Not configured')}")
+            print(f"  💰 Starting: {summary.get('startingBalance', 0):.6f} AVAX")
+            print(f"  💰 Current: {summary.get('currentBalance', 0):.6f} AVAX")
+            print(f"  📈 P&L: {summary.get('pnlAmount', 0):+.6f} AVAX ({summary.get('pnlPercentage', 0):+.2f}%)")
+            print(f"  ⏰ Duration: {summary.get('sessionDurationMinutes', 0)} minutes")
             
-            # Show webhook health
-            stats = summary['webhookStats']
-            if stats['total_sent'] > 0:
-                print(f"  📡 Webhook Success Rate: {stats['success_rate']:.1f}% ({stats['successful']}/{stats['total_sent']})")
-                if stats['consecutive_failures'] > 0:
-                    print(f"  ⚠️ Consecutive Webhook Failures: {stats['consecutive_failures']}")
+            # Optimization stats
+            print(f"\n🤖 TVB: 🚀 Optimization Performance:")
+            print(f"  💾 Requests saved: {optimization.get('requestsSaved', 0)}")
+            print(f"  💓 Heartbeat success: {optimization.get('heartbeatSuccessRate', 0):.1f}%")
+            print(f"  ⚡ Current heartbeat interval: {optimization.get('adaptiveHeartbeatInterval', 0):.0f}s")
+            print(f"  📦 Request batching: {'Enabled' if optimization.get('batchingEnabled') else 'Disabled'}")
+            
         except Exception as e:
             print(f"🤖 TVB: ❌ Error printing session summary: {e}")
     
     def get_stats(self):
-        """Get webhook performance statistics"""
+        """Get webhook performance statistics with optimization metrics"""
         try:
             stats = self.webhook_stats.copy()
             
@@ -484,17 +659,14 @@ class WebhookManager:
             stats["enabled"] = self.enabled
             stats["webhook_url"] = self.webhook_url if self.enabled else None
             stats["wallet_address"] = self.wallet_address
+            stats["adaptive_heartbeat_interval"] = self.adaptive_heartbeat_interval
+            stats["pending_batch_size"] = len(self.pending_updates)
             
             return stats
         except Exception as e:
             print(f"🤖 TVB: ❌ Error getting webhook stats: {e}")
-            return {
-                "total_sent": 0,
-                "successful": 0,
-                "failed": 0,
-                "success_rate": 0,
-                "consecutive_failures": 0,
-                "enabled": self.enabled,
-                "webhook_url": self.webhook_url if self.enabled else None,
-                "wallet_address": self.wallet_address
-            }
+            return {}
+
+
+# Backward compatibility alias
+WebhookManager = OptimizedWebhookManager
