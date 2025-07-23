@@ -1,14 +1,15 @@
-# bot/webhook.py - Updated webhook manager with wallet address inclusion
+# bot/webhook.py - Fixed webhook manager with proper error handling and wallet address
 #!/usr/bin/env python3
 """
 Enhanced Webhook Manager with session balance tracking, P&L calculations, and wallet address
-Updated to include bot wallet address in all webhook communications
+Fixed to prevent webhook failures from crashing bots
 """
 
 import json
 import random
 import requests
 from datetime import datetime
+from requests.exceptions import RequestException, Timeout, ConnectionError
 
 class WebhookManager:
     """Manages webhook communications with session balance tracking, P&L calculations, and wallet address"""
@@ -43,8 +44,14 @@ class WebhookManager:
             "successful": 0,
             "failed": 0,
             "last_sent": None,
-            "last_error": None
+            "last_error": None,
+            "consecutive_failures": 0
         }
+        
+        # Webhook failure handling
+        self.max_consecutive_failures = 5
+        self.failure_backoff_time = 60  # seconds
+        self.last_failure_time = 0
         
         self.enabled = bool(webhook_url and self.bot_secret)
         
@@ -67,7 +74,7 @@ class WebhookManager:
         print(f"🤖 TVB: 💼 Wallet address set: {wallet_address}")
     
     def _get_current_balance(self):
-        """Get current AVAX balance via callback"""
+        """Get current AVAX balance via callback with error handling"""
         if self.get_balance_callback:
             try:
                 return self.get_balance_callback()
@@ -77,26 +84,35 @@ class WebhookManager:
         return None
     
     def _calculate_session_metrics(self):
-        """Calculate session financial metrics"""
-        current_balance = self._get_current_balance()
-        
-        if current_balance is None or self.starting_balance is None:
+        """Calculate session financial metrics with error handling"""
+        try:
+            current_balance = self._get_current_balance()
+            
+            if current_balance is None or self.starting_balance is None:
+                return {
+                    "currentBalance": current_balance,
+                    "startingBalance": self.starting_balance,
+                    "pnlAmount": 0,
+                    "pnlPercentage": 0
+                }
+            
+            pnl_amount = current_balance - self.starting_balance
+            pnl_percentage = (pnl_amount / self.starting_balance * 100) if self.starting_balance > 0 else 0
+            
             return {
-                "currentBalance": current_balance,
-                "startingBalance": self.starting_balance,
+                "currentBalance": round(current_balance, 6),
+                "startingBalance": round(self.starting_balance, 6),
+                "pnlAmount": round(pnl_amount, 6),
+                "pnlPercentage": round(pnl_percentage, 2)
+            }
+        except Exception as e:
+            print(f"🤖 TVB: ⚠️ Error calculating session metrics: {e}")
+            return {
+                "currentBalance": 0,
+                "startingBalance": 0,
                 "pnlAmount": 0,
                 "pnlPercentage": 0
             }
-        
-        pnl_amount = current_balance - self.starting_balance
-        pnl_percentage = (pnl_amount / self.starting_balance * 100) if self.starting_balance > 0 else 0
-        
-        return {
-            "currentBalance": round(current_balance, 6),
-            "startingBalance": round(self.starting_balance, 6),
-            "pnlAmount": round(pnl_amount, 6),
-            "pnlPercentage": round(pnl_percentage, 2)
-        }
     
     def set_session_start(self, starting_balance, start_time=None):
         """Set the session starting balance and time"""
@@ -104,12 +120,33 @@ class WebhookManager:
         self.session_start_time = start_time or datetime.utcnow().isoformat() + "Z"
         print(f"🤖 TVB: 💰 Session started with {starting_balance:.6f} AVAX")
     
+    def _should_skip_webhook(self):
+        """Check if we should skip webhook due to consecutive failures"""
+        if self.webhook_stats["consecutive_failures"] >= self.max_consecutive_failures:
+            time_since_failure = datetime.utcnow().timestamp() - self.last_failure_time
+            if time_since_failure < self.failure_backoff_time:
+                return True
+            else:
+                # Reset after backoff period
+                self.webhook_stats["consecutive_failures"] = 0
+        return False
+    
     def send_update(self, action_type, details):
         """Send webhook update with session financial metrics and wallet address"""
         if not self.enabled:
             return False
         
+        # Skip if we're in failure backoff
+        if self._should_skip_webhook():
+            return False
+        
         try:
+            # Ensure details is a dictionary
+            if details is None:
+                details = {}
+            elif not isinstance(details, dict):
+                details = {"message": str(details)}
+            
             # Only add personality phrases for actual trading actions, not system messages
             if action_type in self.personality_actions and 'message' not in details:
                 phrase_list = self.phrases.get(action_type, [])
@@ -196,46 +233,54 @@ class WebhookManager:
     
     def send_startup_notification(self, startup_info):
         """Send startup notification and set session metrics with wallet address"""
-        # Set session start metrics
-        current_balance = self._get_current_balance()
-        if current_balance is not None:
-            self.set_session_start(current_balance)
-            startup_info['initialBalance'] = round(current_balance, 6)
-        
-        # Ensure bio is included in startup info
-        if self.bio and 'bio' not in startup_info:
-            startup_info['bio'] = self.bio
-        
-        # Log wallet address at startup
-        if self.wallet_address:
-            print(f"🤖 TVB: 💼 {self.display_name} Wallet: {self.wallet_address}")
-            startup_info['walletAddress'] = self.wallet_address
-        else:
-            print(f"🤖 TVB: ⚠️ {self.display_name} has no wallet address configured!")
-        
-        return self.send_update("startup", startup_info)
+        try:
+            # Set session start metrics
+            current_balance = self._get_current_balance()
+            if current_balance is not None:
+                self.set_session_start(current_balance)
+                startup_info['initialBalance'] = round(current_balance, 6)
+            
+            # Ensure bio is included in startup info
+            if self.bio and 'bio' not in startup_info:
+                startup_info['bio'] = self.bio
+            
+            # Log wallet address at startup
+            if self.wallet_address:
+                print(f"🤖 TVB: 💼 {self.display_name} Wallet: {self.wallet_address}")
+                startup_info['walletAddress'] = self.wallet_address
+            else:
+                print(f"🤖 TVB: ⚠️ {self.display_name} has no wallet address configured!")
+            
+            return self.send_update("startup", startup_info)
+        except Exception as e:
+            print(f"🤖 TVB: ❌ Error sending startup notification: {e}")
+            return False
     
     def send_trade_update(self, action, token_info, trade_details, post_trade_balance=None):
         """Send specialized trading update with financial impact and wallet address"""
-        details = {
-            "tokenAddress": token_info["address"],
-            "tokenSymbol": token_info["symbol"],
-            "tokenName": token_info["name"]
-        }
-        details.update(trade_details)
-        
-        # Add pre/post trade balance comparison if provided
-        if post_trade_balance is not None:
-            pre_trade_balance = self._get_current_balance()
-            if pre_trade_balance is not None:
-                balance_change = post_trade_balance - pre_trade_balance
-                details.update({
-                    'preTradeBalance': round(pre_trade_balance, 6),
-                    'postTradeBalance': round(post_trade_balance, 6),
-                    'balanceChange': round(balance_change, 6)
-                })
-        
-        return self.send_update(action, details)
+        try:
+            details = {
+                "tokenAddress": token_info["address"],
+                "tokenSymbol": token_info["symbol"],
+                "tokenName": token_info["name"]
+            }
+            details.update(trade_details)
+            
+            # Add pre/post trade balance comparison if provided
+            if post_trade_balance is not None:
+                pre_trade_balance = self._get_current_balance()
+                if pre_trade_balance is not None:
+                    balance_change = post_trade_balance - pre_trade_balance
+                    details.update({
+                        'preTradeBalance': round(pre_trade_balance, 6),
+                        'postTradeBalance': round(post_trade_balance, 6),
+                        'balanceChange': round(balance_change, 6)
+                    })
+            
+            return self.send_update(action, details)
+        except Exception as e:
+            print(f"🤖 TVB: ❌ Error sending trade update: {e}")
+            return False
     
     def send_buy_update(self, token_info, amount_avax, tx_hash, post_trade_balance=None):
         """Send buy transaction update with financial metrics and wallet address"""
@@ -257,20 +302,57 @@ class WebhookManager:
     
     def send_heartbeat(self, balance_info, token_count, extra_data=None):
         """Send heartbeat update with comprehensive session metrics and wallet address"""
-        details = {
-            "message": f"{self.display_name} is active and trading",
-            "tokensTracked": token_count,
-            "status": "active"
-        }
-        
-        if extra_data:
-            details.update(extra_data)
-        
-        # Financial metrics are automatically added by send_update()
-        return self.send_update("heartbeat", details)
+        try:
+            details = {
+                "message": f"{self.display_name} is active and trading",
+                "tokensTracked": token_count,
+                "status": "active"
+            }
+            
+            if extra_data:
+                details.update(extra_data)
+            
+            # Financial metrics are automatically added by send_update()
+            return self.send_update("heartbeat", details)
+        except Exception as e:
+            print(f"🤖 TVB: ❌ Error sending heartbeat: {e}")
+            return False
+    
+    def send_error_update(self, error_message, error_type="general_error"):
+        """Send error notification with personality phrase"""
+        try:
+            return self.send_update("error", {
+                "message": f"Encountered an issue: {error_message}",
+                "errorType": error_type,
+                "errorDetails": error_message
+            })
+        except Exception as e:
+            print(f"🤖 TVB: ❌ Error sending error update: {e}")
+            return False
+
+    def send_balance_alert(self, balance, threshold, alert_type="low"):
+        """Send balance alert notification"""
+        try:
+            return self.send_update("balance_alert", {
+                "message": f"Balance alert: {balance:.6f} AVAX (threshold: {threshold:.6f})",
+                "currentBalance": balance,
+                "threshold": threshold,
+                "alertType": alert_type
+            })
+        except Exception as e:
+            print(f"🤖 TVB: ❌ Error sending balance alert: {e}")
+            return False
+
+    def send_shutdown_notification(self, shutdown_info):
+        """Send shutdown notification with session summary"""
+        try:
+            return self.send_update("shutdown", shutdown_info)
+        except Exception as e:
+            print(f"🤖 TVB: ❌ Error sending shutdown notification: {e}")
+            return False
     
     def _send_webhook(self, payload):
-        """Send the actual HTTP request with enhanced logging"""
+        """Send the actual HTTP request with enhanced logging and error handling"""
         try:
             response = requests.post(
                 self.webhook_url,
@@ -306,17 +388,18 @@ class WebhookManager:
                 print(f"🤖 TVB: ❌ Webhook failed: {error_msg}")
                 return False
                 
-        except requests.exceptions.Timeout:
+        except Timeout:
             print(f"🤖 TVB: ⏰ Webhook timeout")
             return False
-        except requests.exceptions.ConnectionError:
+        except ConnectionError:
             print(f"🤖 TVB: 🔌 Webhook connection error")
             return False
-        except requests.exceptions.RequestException as e:
+        except RequestException as e:
             print(f"🤖 TVB: 🌐 Webhook request error: {e}")
             return False
-    
-    # ... (rest of the methods remain the same as they don't need wallet address changes)
+        except Exception as e:
+            print(f"🤖 TVB: ❌ Unexpected webhook error: {e}")
+            return False
     
     def _update_stats(self, success, action_type, error_msg=None):
         """Update webhook statistics"""
@@ -325,8 +408,12 @@ class WebhookManager:
         
         if success:
             self.webhook_stats["successful"] += 1
+            self.webhook_stats["consecutive_failures"] = 0  # Reset on success
         else:
             self.webhook_stats["failed"] += 1
+            self.webhook_stats["consecutive_failures"] += 1
+            self.last_failure_time = datetime.utcnow().timestamp()
+            
             if error_msg:
                 self.webhook_stats["last_error"] = {
                     "action": action_type,
@@ -336,63 +423,78 @@ class WebhookManager:
     
     def get_session_summary(self):
         """Get comprehensive session summary"""
-        metrics = self._calculate_session_metrics()
-        
-        return {
-            "sessionStartTime": self.session_start_time,
-            "sessionDurationMinutes": self._get_session_duration_minutes(),
-            "startingBalance": metrics["startingBalance"],
-            "currentBalance": metrics["currentBalance"],
-            "pnlAmount": metrics["pnlAmount"],
-            "pnlPercentage": metrics["pnlPercentage"],
-            "walletAddress": self.wallet_address,
-            "webhookStats": self.get_stats()
-        }
+        try:
+            metrics = self._calculate_session_metrics()
+            
+            return {
+                "sessionStartTime": self.session_start_time,
+                "sessionDurationMinutes": self._get_session_duration_minutes(),
+                "startingBalance": metrics["startingBalance"],
+                "currentBalance": metrics["currentBalance"],
+                "pnlAmount": metrics["pnlAmount"],
+                "pnlPercentage": metrics["pnlPercentage"],
+                "walletAddress": self.wallet_address,
+                "webhookStats": self.get_stats()
+            }
+        except Exception as e:
+            print(f"🤖 TVB: ❌ Error getting session summary: {e}")
+            return {
+                "sessionStartTime": self.session_start_time,
+                "sessionDurationMinutes": 0,
+                "startingBalance": 0,
+                "currentBalance": 0,
+                "pnlAmount": 0,
+                "pnlPercentage": 0,
+                "walletAddress": self.wallet_address,
+                "webhookStats": self.get_stats()
+            }
     
     def print_session_summary(self):
         """Print session financial summary with wallet address"""
-        summary = self.get_session_summary()
-        
-        print(f"\n🤖 TVB: 📊 Session Financial Summary:")
-        print(f"  💼 Wallet: {summary['walletAddress'] or 'Not configured'}")
-        print(f"  💰 Starting Balance: {summary['startingBalance']:.6f} AVAX")
-        print(f"  💰 Current Balance: {summary['currentBalance']:.6f} AVAX")
-        print(f"  📈 P&L Amount: {summary['pnlAmount']:+.6f} AVAX")
-        print(f"  📈 P&L Percentage: {summary['pnlPercentage']:+.2f}%")
-        print(f"  ⏰ Session Duration: {summary['sessionDurationMinutes']} minutes")
+        try:
+            summary = self.get_session_summary()
+            
+            print(f"\n🤖 TVB: 📊 Session Financial Summary:")
+            print(f"  💼 Wallet: {summary['walletAddress'] or 'Not configured'}")
+            print(f"  💰 Starting Balance: {summary['startingBalance']:.6f} AVAX")
+            print(f"  💰 Current Balance: {summary['currentBalance']:.6f} AVAX")
+            print(f"  📈 P&L Amount: {summary['pnlAmount']:+.6f} AVAX")
+            print(f"  📈 P&L Percentage: {summary['pnlPercentage']:+.2f}%")
+            print(f"  ⏰ Session Duration: {summary['sessionDurationMinutes']} minutes")
+            
+            # Show webhook health
+            stats = summary['webhookStats']
+            if stats['total_sent'] > 0:
+                print(f"  📡 Webhook Success Rate: {stats['success_rate']:.1f}% ({stats['successful']}/{stats['total_sent']})")
+                if stats['consecutive_failures'] > 0:
+                    print(f"  ⚠️ Consecutive Webhook Failures: {stats['consecutive_failures']}")
+        except Exception as e:
+            print(f"🤖 TVB: ❌ Error printing session summary: {e}")
     
     def get_stats(self):
         """Get webhook performance statistics"""
-        stats = self.webhook_stats.copy()
-        
-        if stats["total_sent"] > 0:
-            stats["success_rate"] = (stats["successful"] / stats["total_sent"]) * 100
-        else:
-            stats["success_rate"] = 0
-        
-        stats["enabled"] = self.enabled
-        stats["webhook_url"] = self.webhook_url if self.enabled else None
-        stats["wallet_address"] = self.wallet_address
-        
-        return stats
-    
-def send_error_update(self, error_message, error_type="general_error"):
-    """Send error notification with personality phrase"""
-    return self.send_update("error", {
-        "message": f"Encountered an issue: {error_message}",
-        "errorType": error_type,
-        "errorDetails": error_message
-    })
-
-def send_balance_alert(self, balance, threshold, alert_type="low"):
-    """Send balance alert notification"""
-    return self.send_update("balance_alert", {
-        "message": f"Balance alert: {balance:.6f} AVAX (threshold: {threshold:.6f})",
-        "currentBalance": balance,
-        "threshold": threshold,
-        "alertType": alert_type
-    })
-
-def send_shutdown_notification(self, shutdown_info):
-    """Send shutdown notification with session summary"""
-    return self.send_update("shutdown", shutdown_info)
+        try:
+            stats = self.webhook_stats.copy()
+            
+            if stats["total_sent"] > 0:
+                stats["success_rate"] = (stats["successful"] / stats["total_sent"]) * 100
+            else:
+                stats["success_rate"] = 0
+            
+            stats["enabled"] = self.enabled
+            stats["webhook_url"] = self.webhook_url if self.enabled else None
+            stats["wallet_address"] = self.wallet_address
+            
+            return stats
+        except Exception as e:
+            print(f"🤖 TVB: ❌ Error getting webhook stats: {e}")
+            return {
+                "total_sent": 0,
+                "successful": 0,
+                "failed": 0,
+                "success_rate": 0,
+                "consecutive_failures": 0,
+                "enabled": self.enabled,
+                "webhook_url": self.webhook_url if self.enabled else None,
+                "wallet_address": self.wallet_address
+            }

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Factory contract interface for TVB bot interactions
-Handles all factory contract calls and ABI management
+Fixed Factory contract interface for TVB bot interactions
+Corrected ABI to match the actual GrandFactory.sol contract
 """
 
 from web3 import Web3
 
 class FactoryContract:
-    """Interface for the TokenFactory smart contract"""
+    """Interface for the TokenFactory smart contract with correct ABI"""
     
     def __init__(self, w3, address):
         self.w3 = w3
@@ -18,8 +18,9 @@ class FactoryContract:
         print(f"🤖 TVB: 📜 Factory contract initialized at {address}")
     
     def _get_factory_abi(self):
-        """Get the complete factory contract ABI"""
+        """Get the CORRECTED factory contract ABI matching GrandFactory.sol"""
         return [
+            # CORRECTED: createToken with all required parameters
             {
                 "inputs": [
                     {"internalType": "string", "name": "name", "type": "string"},
@@ -33,6 +34,7 @@ class FactoryContract:
                 "stateMutability": "payable",
                 "type": "function"
             },
+            # CORRECTED: buy with minTokensOut parameter
             {
                 "inputs": [
                     {"internalType": "address", "name": "tokenAddress", "type": "address"},
@@ -43,16 +45,19 @@ class FactoryContract:
                 "stateMutability": "payable",
                 "type": "function"
             },
+            # CORRECTED: sell with minEthOut parameter (this was the big one!)
             {
                 "inputs": [
-                    {"internalType": "address", "name": "token", "type": "address"},
-                    {"internalType": "uint256", "name": "amount", "type": "uint256"}
+                    {"internalType": "address", "name": "tokenAddress", "type": "address"},
+                    {"internalType": "uint256", "name": "tokenAmount", "type": "uint256"},
+                    {"internalType": "uint256", "name": "minEthOut", "type": "uint256"}
                 ],
                 "name": "sell",
                 "outputs": [],
                 "stateMutability": "nonpayable",
                 "type": "function"
             },
+            # View functions (these were mostly correct)
             {
                 "inputs": [],
                 "name": "getAllTokens",
@@ -75,8 +80,22 @@ class FactoryContract:
                 "type": "function"
             },
             {
-                "inputs": [{"internalType": "address", "name": "tokenAddress", "type": "address"}],
-                "name": "getCurrentPrice",
+                "inputs": [
+                    {"internalType": "address", "name": "tokenAddress", "type": "address"},
+                    {"internalType": "uint256", "name": "ethAmount", "type": "uint256"}
+                ],
+                "name": "calculateTokenAmount",
+                "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+                "stateMutability": "view",
+                "type": "function"
+            },
+            # NEW: Functions that were missing from original ABI
+            {
+                "inputs": [
+                    {"internalType": "address", "name": "tokenAddress", "type": "address"},
+                    {"internalType": "uint256", "name": "tokenAmount", "type": "uint256"}
+                ],
+                "name": "calculateBuyPrice",
                 "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
                 "stateMutability": "view",
                 "type": "function"
@@ -84,9 +103,9 @@ class FactoryContract:
             {
                 "inputs": [
                     {"internalType": "address", "name": "tokenAddress", "type": "address"},
-                    {"internalType": "uint256", "name": "ethAmount", "type": "uint256"}
+                    {"internalType": "uint256", "name": "tokenAmount", "type": "uint256"}
                 ],
-                "name": "calculateTokenAmount",
+                "name": "calculateSellPrice",
                 "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
                 "stateMutability": "view",
                 "type": "function"
@@ -111,6 +130,84 @@ class FactoryContract:
                 "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
                 "stateMutability": "pure",
                 "type": "function"
+            },
+            {
+                "inputs": [{"internalType": "address", "name": "tokenAddress", "type": "address"}],
+                "name": "resumeTrading",
+                "outputs": [],
+                "stateMutability": "nonpayable",
+                "type": "function"
+            },
+            {
+                "inputs": [{"internalType": "address", "name": "tokenAddress", "type": "address"}],
+                "name": "getGoalReachedTimestamp",
+                "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+                "stateMutability": "view",
+                "type": "function"
+            },
+            {
+                "inputs": [{"internalType": "address", "name": "tokenAddress", "type": "address"}],
+                "name": "getTimeUntilAutoResume",
+                "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+                "stateMutability": "view",
+                "type": "function"
+            },
+            # Contract constants and state variables
+            {
+                "inputs": [],
+                "name": "DECIMALS",
+                "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+                "stateMutability": "view",
+                "type": "function"
+            },
+            {
+                "inputs": [],
+                "name": "MAX_SUPPLY",
+                "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+                "stateMutability": "view",
+                "type": "function"
+            },
+            {
+                "inputs": [],
+                "name": "INITIAL_PRICE",
+                "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+                "stateMutability": "view",
+                "type": "function"
+            },
+            {
+                "inputs": [],
+                "name": "MIN_PURCHASE",
+                "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+                "stateMutability": "view",
+                "type": "function"
+            },
+            {
+                "inputs": [],
+                "name": "MAX_PURCHASE",
+                "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+                "stateMutability": "view",
+                "type": "function"
+            },
+            {
+                "inputs": [],
+                "name": "TRADING_FEE",
+                "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+                "stateMutability": "view",
+                "type": "function"
+            },
+            {
+                "inputs": [{"internalType": "address", "name": "", "type": "address"}],
+                "name": "virtualSupply",
+                "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+                "stateMutability": "view",
+                "type": "function"
+            },
+            {
+                "inputs": [{"internalType": "address", "name": "", "type": "address"}],
+                "name": "tokenCreators",
+                "outputs": [{"internalType": "address", "name": "", "type": "address"}],
+                "stateMutability": "view",
+                "type": "function"
             }
         ]
     
@@ -133,14 +230,8 @@ class FactoryContract:
             return 0
     
     def get_current_price(self, token_address):
-        """Get the current price of a token"""
-        try:
-            return self.contract.functions.getCurrentPrice(
-                self.w3.to_checksum_address(token_address)
-            ).call()
-        except Exception as e:
-            print(f"🤖 TVB: ❌ Error getting current price for {token_address}: {e}")
-            return 0
+        """Get the current price of a token using lastPrice (deprecated method name)"""
+        return self.get_last_price(token_address)
     
     def get_last_price(self, token_address):
         """Get the last recorded price of a token"""
@@ -162,6 +253,28 @@ class FactoryContract:
             ).call()
         except Exception as e:
             print(f"🤖 TVB: ❌ Error calculating token amount: {e}")
+            return 0
+    
+    def calculate_buy_price(self, token_address, token_amount):
+        """Calculate the price to buy a specific amount of tokens"""
+        try:
+            return self.contract.functions.calculateBuyPrice(
+                self.w3.to_checksum_address(token_address),
+                token_amount
+            ).call()
+        except Exception as e:
+            print(f"🤖 TVB: ❌ Error calculating buy price: {e}")
+            return 0
+    
+    def calculate_sell_price(self, token_address, token_amount):
+        """Calculate the price received for selling a specific amount of tokens"""
+        try:
+            return self.contract.functions.calculateSellPrice(
+                self.w3.to_checksum_address(token_address),
+                token_amount
+            ).call()
+        except Exception as e:
+            print(f"🤖 TVB: ❌ Error calculating sell price: {e}")
             return 0
     
     def calculate_fee(self, amount):
@@ -193,6 +306,61 @@ class FactoryContract:
             print(f"🤖 TVB: ❌ Error getting collateral for {token_address}: {e}")
             return 0
     
+    def get_virtual_supply(self, token_address):
+        """Get the virtual supply of a token"""
+        try:
+            return self.contract.functions.virtualSupply(
+                self.w3.to_checksum_address(token_address)
+            ).call()
+        except Exception as e:
+            print(f"🤖 TVB: ❌ Error getting virtual supply for {token_address}: {e}")
+            return 0
+    
+    def get_token_creator(self, token_address):
+        """Get the creator address of a token"""
+        try:
+            return self.contract.functions.tokenCreators(
+                self.w3.to_checksum_address(token_address)
+            ).call()
+        except Exception as e:
+            print(f"🤖 TVB: ❌ Error getting token creator for {token_address}: {e}")
+            return "0x0000000000000000000000000000000000000000"
+    
+    def get_goal_reached_timestamp(self, token_address):
+        """Get the timestamp when token reached its funding goal"""
+        try:
+            return self.contract.functions.getGoalReachedTimestamp(
+                self.w3.to_checksum_address(token_address)
+            ).call()
+        except Exception as e:
+            print(f"🤖 TVB: ❌ Error getting goal timestamp for {token_address}: {e}")
+            return 0
+    
+    def get_time_until_auto_resume(self, token_address):
+        """Get time remaining until automatic trading resumption"""
+        try:
+            return self.contract.functions.getTimeUntilAutoResume(
+                self.w3.to_checksum_address(token_address)
+            ).call()
+        except Exception as e:
+            print(f"🤖 TVB: ❌ Error getting auto resume time for {token_address}: {e}")
+            return 0
+    
+    def get_contract_constants(self):
+        """Get important contract constants"""
+        try:
+            return {
+                "DECIMALS": self.contract.functions.DECIMALS().call(),
+                "MAX_SUPPLY": self.contract.functions.MAX_SUPPLY().call(),
+                "INITIAL_PRICE": self.contract.functions.INITIAL_PRICE().call(),
+                "MIN_PURCHASE": self.contract.functions.MIN_PURCHASE().call(),
+                "MAX_PURCHASE": self.contract.functions.MAX_PURCHASE().call(),
+                "TRADING_FEE": self.contract.functions.TRADING_FEE().call(),
+            }
+        except Exception as e:
+            print(f"🤖 TVB: ❌ Error getting contract constants: {e}")
+            return {}
+    
     def get_token_info(self, token_address):
         """Get comprehensive information about a token"""
         try:
@@ -201,17 +369,20 @@ class FactoryContract:
             info = {
                 "address": address,
                 "state": self.get_token_state(address),
-                "current_price": self.get_current_price(address),
-                "last_price": self.get_last_price(address),
-                "funding_goal": self.get_funding_goal(address),
-                "collateral": self.get_collateral(address)
+                "lastPrice": self.get_last_price(address),
+                "fundingGoal": self.get_funding_goal(address),
+                "collateral": self.get_collateral(address),
+                "virtualSupply": self.get_virtual_supply(address),
+                "creator": self.get_token_creator(address),
+                "goalReachedTimestamp": self.get_goal_reached_timestamp(address),
+                "timeUntilAutoResume": self.get_time_until_auto_resume(address)
             }
             
             # Add calculated fields
-            if info["funding_goal"] > 0:
-                info["funding_progress"] = (info["collateral"] / info["funding_goal"]) * 100
+            if info["fundingGoal"] > 0:
+                info["fundingProgress"] = (info["collateral"] / info["fundingGoal"]) * 100
             else:
-                info["funding_progress"] = 0
+                info["fundingProgress"] = 0
             
             return info
             
@@ -249,28 +420,30 @@ class FactoryContract:
         
         return states
     
-    def estimate_gas_for_buy(self, token_address, eth_amount):
+    def estimate_gas_for_buy(self, token_address, eth_amount, min_tokens_out=0):
         """Estimate gas needed for a buy transaction"""
         try:
             return self.contract.functions.buy(
-                self.w3.to_checksum_address(token_address)
+                self.w3.to_checksum_address(token_address),
+                min_tokens_out
             ).estimate_gas({
                 'value': self.w3.to_wei(eth_amount, 'ether')
             })
         except Exception as e:
             print(f"🤖 TVB: ❌ Error estimating buy gas: {e}")
-            return 500000  # Default fallback
+            return 800000  # Increased default fallback
     
-    def estimate_gas_for_sell(self, token_address, token_amount):
+    def estimate_gas_for_sell(self, token_address, token_amount, min_eth_out=0):
         """Estimate gas needed for a sell transaction"""
         try:
             return self.contract.functions.sell(
                 self.w3.to_checksum_address(token_address),
-                token_amount
+                token_amount,
+                min_eth_out
             ).estimate_gas()
         except Exception as e:
             print(f"🤖 TVB: ❌ Error estimating sell gas: {e}")
-            return 500000  # Default fallback
+            return 800000  # Increased default fallback
 
 
 # Token state constants for easy reference
@@ -301,11 +474,16 @@ class TokenState:
 
 # Example usage and testing
 if __name__ == "__main__":
-    print("🤖 TVB: Factory contract interface loaded!")
+    print("🤖 TVB: CORRECTED Factory contract interface loaded!")
     
     # Example of how to use the interface
     print("🤖 TVB: Token states:")
     for i in range(5):
         print(f"  {i}: {TokenState.get_name(i)} (Tradeable: {TokenState.is_tradeable(i)})")
     
-    print("🤖 TVB: ✅ Factory contract module test complete!")
+    print("🤖 TVB: ✅ CORRECTED Factory contract module test complete!")
+    print("🤖 TVB: 🔧 Key fixes:")
+    print("  - Added minEthOut parameter to sell() function")
+    print("  - Corrected all function signatures to match contract")
+    print("  - Added missing view functions")
+    print("  - Increased gas estimates for more complex contract")
